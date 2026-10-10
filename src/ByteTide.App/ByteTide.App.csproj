@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <AssemblyName>ByteTide</AssemblyName>
+    <RootNamespace>ByteTide.App</RootNamespace>
+    <!-- This only ever runs on Windows (WinForms). Locking to a single RID
+         means only win-x64's native SQLite binaries get copied into build
+         output, instead of Windows+Linux+macOS x several architectures each
+         (the dominant cause of excess files/folders in bin/obj). Explicitly
+         false here so this stays a small framework-dependent build rather
+         than bundling its own .NET runtime. -->
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <SelfContained>false</SelfContained>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\ByteTide.Core\ByteTide.Core.csproj" />
+  </ItemGroup>
+
+</Project>
