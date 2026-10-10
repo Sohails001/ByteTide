@@ -1,13 +1,17 @@
 
----
-name: Feature request
-about: Suggest an idea
-labels: enhancement
----
+## What does this change?
 
-**What problem would this solve?**
+<!-- Short description and the issue it addresses (Fixes #123) -->
 
-**What would you like to see?**
+## How was it tested?
 
-**Alternatives you've considered**
+- [ ] `dotnet build ByteTide.sln` passes
+- [ ] `dotnet test` passes
+- [ ] Tried it manually (describe)
+
+## Checklist
+
+- [ ] Focused on one topic
+- [ ] Tests added/updated for Core logic
+- [ ] `CHANGELOG.md` and docs updated if needed
 
