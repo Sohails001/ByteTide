@@ -30,7 +30,9 @@ ByteTide is a modern, open-source take on that idea:
 - **Keeps your history.** Imports old RAS Graph & Stats `.dat` archives, so years of data sit side by side with new data.
 - **Runs your way.** A tray app for desktops, or a headless Windows Service for always-on machines.
 
-> 📸 *Screenshots go here.* Add images to `docs/images/` and reference them, e.g. `![Main window](docs/images/main-window.png)`.
+![ByteTide main window](docs/ByteTide%20main-window.png)
+
+![ByteTide reports](docs/ByteTide%20reports.png)
 
 ## ⬇ Download
 
