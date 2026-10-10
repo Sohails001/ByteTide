@@ -27,7 +27,7 @@ Controls what the graph draws. Each option is a toggle and is remembered.
 ### Window
 - **Always on Top**
 - **Semi-transparent** — about 85% opacity
-- **Click-through** — the window ignores mouse clicks so it can sit over other apps like a HUD. Turn it off from the menu (or the tray icon) if you need to click the window again.
+- **Click-through** — the window ignores mouse clicks so it can sit over other apps like a HUD. **Undo it from the tray icon:** double-click the tray icon, or right-click it → **Window → Click-through**. Click-through is never remembered, so ByteTide always starts with it off.
 - **Reset Window Position** — useful if the window ends up off-screen after a monitor change.
 
 ### Adapters
@@ -55,7 +55,19 @@ Configure SMTP details in the notifications dialog (server, port, credentials, f
 
 ## Tray icon
 
-The tray icon draws a tiny live graph of recent traffic and refreshes every couple of seconds to keep CPU use low.
+Right-click the tray icon for a menu with **everything the main window's menu bar has** (Adapters, View, Window, Tools, Reports, Import, About), plus **Tray Icon** options and Exit. Double-click the icon (or choose **Open ByteTide**) to bring the window forward; this also switches click-through off.
+
+Hover over the icon to see a tooltip with the current download (▼) and upload (▲) speed.
+
+### Tray Icon menu
+
+- **Icon style**
+  - **Mini graph**: a tiny live line graph (blue = download, red = upload).
+  - **Speed numbers**: two short numbers, download on top, upload underneath (for example `391M` over `0`). Tray icons are only about 16 pixels, so for fully readable text use the floating mini meter.
+  - **Classic dial-up monitors**: two little computers. The back screen lights up while downloading, the front one while uploading, like the old dial-up status icon.
+- **Dial-up monitor colors**: Green / Yellow, Green, Yellow, Blue, XP Blue, ZoneAlarm, or **Custom** (choose your own download and upload colors).
+- **Show speeds in bits (kbps / Mbps)**: switches the tooltip, speed numbers and mini meter from bytes to bits.
+- **Floating mini meter**: a small always-on-top window with readable speeds and a mini graph. Drag it anywhere (it remembers where), right-click it to close. It never ignores the mouse.
 
 ## Where data is kept
 

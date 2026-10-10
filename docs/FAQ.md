@@ -19,7 +19,10 @@ Known limitation: the day's counter baseline resets when the app or service rest
 Tray icon → Open, then **Window → Reset Window Position**.
 
 **I can't click the window anymore.**
-Click-through is on. Turn it off from the **Window** menu or by right-clicking the tray icon.
+Click-through is on. Double-click the ByteTide tray icon, or right-click it → **Window → Click-through**. From version 1.0.1 ByteTide always starts with click-through off. On version 1.0.0 you can also click the ByteTide taskbar button, press **Alt**, use the arrow keys to reach **Window → Click-through**, and press **Enter**, or exit from the tray menu and relaunch.
+
+**The tray icon text is too small to read.**
+Windows tray icons are only about 16 pixels wide. Turn on **Tray Icon → Floating mini meter** for large readable speeds, and hover over the tray icon for a tooltip.
 
 **Where do I find the database?**
 `%AppData%\ByteTide\data.db` (GUI) or `%ProgramData%\ByteTide\data.db` (service).
