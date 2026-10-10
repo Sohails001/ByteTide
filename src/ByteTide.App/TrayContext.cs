@@ -31,6 +31,23 @@ public sealed class TrayContext : ApplicationContext
     private Icon? _currentTrayIcon;
     private DateTime _lastTrayIconUpdate = DateTime.MinValue;
 
+    private const string TrayOptionsKey = "trayOptions";
+
+    // Used to hop from the sampler's background timer thread onto the UI
+    // thread, since the tray icon and floating meter are UI objects.
+    private readonly Control _marshal = new();
+
+    private TrayOptions _trayOptions = new();
+    private FloatingMeterForm? _meter;
+    private double _lastDown;
+    private double _lastUp;
+    private string? _lastIconKey;
+    private string? _lastTooltip;
+
+    // Below this rate (bytes/sec) the dial-up monitors count as "idle", so
+    // background chatter doesn't make them flicker constantly.
+    private const double ActivityThresholdBps = 512;
+
     /// <summary>
     /// Pre-release builds stored data under "BandwidthMonitor". If that folder
     /// exists and the new "ByteTide" one doesn't, move it over so existing
@@ -54,13 +71,17 @@ public sealed class TrayContext : ApplicationContext
         Directory.CreateDirectory(dataDir);
 
         _storage = new Storage(Path.Combine(dataDir, "data.db"));
+        _ = _marshal.Handle; // force handle creation here, on the UI thread
+        LoadTrayOptions();
+
         _sampler = new NetworkSampler(TimeSpan.FromSeconds(1));
         _sampler.SamplesReady += OnSamples;
 
+        // The tray menu mirrors the main window's menu bar (see BuildTrayMenu)
+        // and is rebuilt each time it opens so check marks are always current.
         var menu = new ContextMenuStrip();
-        menu.Items.Add("Open", null, (_, _) => ShowMain());
-        menu.Items.Add(new ToolStripSeparator());
-        menu.Items.Add("Exit", null, (_, _) => ExitApp());
+        BuildTrayMenu(menu);
+        menu.Opening += (_, _) => BuildTrayMenu(menu);
 
         _trayIcon = new NotifyIcon
         {
@@ -80,6 +101,8 @@ public sealed class TrayContext : ApplicationContext
         _rollupTimer.Start();
 
         ShowMain();
+        ApplyMeterVisibility();
+        RenderTrayIcon(force: true);
     }
 
     private void OnSamples(IReadOnlyList<LiveSample> samples)
@@ -106,30 +129,95 @@ public sealed class TrayContext : ApplicationContext
             acc.LastBytesSent = sample.BytesSent;
         }
 
-        UpdateTrayIcon(samples);
-    }
-
-    // ----- Tray mini-graph ------------------------------------------------
-
-    private void UpdateTrayIcon(IReadOnlyList<LiveSample> samples)
-    {
         double down = samples.Sum(s => s.DownloadBps);
         double up = samples.Sum(s => s.UploadBps);
+
+        // This runs on the sampler's background timer thread; the tray icon
+        // and meter window must be updated on the UI thread.
+        try
+        {
+            if (!_marshal.IsDisposed)
+                _marshal.BeginInvoke(new Action(() => UpdateTray(down, up)));
+        }
+        catch (InvalidOperationException) { /* shutting down (also covers ObjectDisposedException) */ }
+    }
+
+    // ----- Tray icon, tooltip and floating meter ----------------------------
+
+    private void UpdateTray(double down, double up)
+    {
+        _lastDown = down;
+        _lastUp = up;
 
         _trayHistory.Add((down, up));
         if (_trayHistory.Count > 16) _trayHistory.RemoveAt(0);
 
-        // Regenerating the icon involves a Bitmap allocation, a GDI+ draw pass,
-        // and an unmanaged icon-handle round trip (GetHicon/DestroyIcon) --
-        // real, measurable cost if repeated every single second forever for as
-        // long as the app runs. Every 2s is still visually "live" in the tray
-        // and roughly halves that overhead.
-        if ((DateTime.Now - _lastTrayIconUpdate).TotalSeconds < 2) return;
-        _lastTrayIconUpdate = DateTime.Now;
+        _meter?.Push(down, up);
+        UpdateTooltip(down, up);
+        RenderTrayIcon(force: false);
+    }
 
+    private void UpdateTooltip(double down, double up)
+    {
+        bool bits = _trayOptions.ShowSpeedsInBits;
+        var text = "ByteTide - current transfer rate\n" +
+                   "\u25BC " + SpeedFormat.Full(down, bits) + "    \u25B2 " + SpeedFormat.Full(up, bits);
+
+        if (text == _lastTooltip) return;
+        _lastTooltip = text;
+
+        try { _trayIcon.Text = text.Length > 127 ? text.Substring(0, 127) : text; }
+        catch { /* tooltip is cosmetic */ }
+    }
+
+    /// <summary>
+    /// Redraws the tray icon for the current style. Regenerating an icon costs
+    /// a Bitmap, a GDI+ draw pass and an unmanaged handle round trip, so each
+    /// style skips redraws when nothing visible has changed.
+    /// </summary>
+    private void RenderTrayIcon(bool force)
+    {
         try
         {
-            RenderTrayIcon();
+            bool bits = _trayOptions.ShowSpeedsInBits;
+            Icon icon;
+
+            switch (_trayOptions.Style)
+            {
+                case TrayIconStyle.SpeedNumbers:
+                {
+                    var key = "N|" + bits + "|" + SpeedFormat.Compact(_lastDown, bits) + "|" + SpeedFormat.Compact(_lastUp, bits);
+                    if (!force && key == _lastIconKey) return;
+                    _lastIconKey = key;
+                    icon = TrayIconRenderer.RenderSpeedNumbers(_lastDown, _lastUp, bits);
+                    break;
+                }
+
+                case TrayIconStyle.DialupMonitors:
+                {
+                    bool receiving = _lastDown > ActivityThresholdBps;
+                    bool sending = _lastUp > ActivityThresholdBps;
+                    var (downColor, upColor) = TrayIconRenderer.PaletteColors(_trayOptions);
+                    var key = "D|" + receiving + "|" + sending + "|" + downColor.ToArgb() + "|" + upColor.ToArgb();
+                    if (!force && key == _lastIconKey) return;
+                    _lastIconKey = key;
+                    icon = TrayIconRenderer.RenderDialup(receiving, sending, downColor, upColor);
+                    break;
+                }
+
+                default:
+                    if (!force && (DateTime.Now - _lastTrayIconUpdate).TotalSeconds < 2) return;
+                    _lastIconKey = null;
+                    icon = TrayIconRenderer.RenderGraph(_trayHistory);
+                    break;
+            }
+
+            _lastTrayIconUpdate = DateTime.Now;
+
+            var old = _currentTrayIcon;
+            _currentTrayIcon = icon;
+            _trayIcon.Icon = icon;
+            old?.Dispose();
         }
         catch
         {
@@ -137,59 +225,212 @@ public sealed class TrayContext : ApplicationContext
         }
     }
 
-    private void RenderTrayIcon()
+    private void LoadTrayOptions()
     {
-        const int size = 32;
-        using var bmp = new Bitmap(size, size);
-        using (var g = Graphics.FromImage(bmp))
-        {
-            g.Clear(Color.Black);
-
-            if (_trayHistory.Count >= 2)
-            {
-                double max = Math.Max(_trayHistory.Max(s => s.Down), _trayHistory.Max(s => s.Up));
-                max = Math.Max(max, 1024);
-
-                DrawMiniSeries(g, size, _trayHistory.Select(s => s.Down).ToList(), max, Color.FromArgb(90, 160, 255));
-                DrawMiniSeries(g, size, _trayHistory.Select(s => s.Up).ToList(), max, Color.FromArgb(255, 100, 100));
-            }
-        }
-
-        var hIcon = bmp.GetHicon();
         try
         {
-            using var temp = Icon.FromHandle(hIcon);
-            var cloned = (Icon)temp.Clone(); // independent GDI+ copy, safe to keep after we destroy hIcon below
-
-            var old = _currentTrayIcon;
-            _currentTrayIcon = cloned;
-            _trayIcon.Icon = cloned;
-            old?.Dispose();
+            var json = _storage.GetSetting(TrayOptionsKey);
+            if (json is not null)
+                _trayOptions = JsonSerializer.Deserialize<TrayOptions>(json) ?? new TrayOptions();
         }
-        finally
+        catch
         {
-            NativeMethods.DestroyIcon(hIcon);
+            _trayOptions = new TrayOptions();
         }
     }
 
-    private static void DrawMiniSeries(Graphics g, int size, List<double> values, double max, Color color)
+    private void SaveTrayOptions()
     {
-        int n = values.Count;
-        if (n < 2) return;
+        try { _storage.SetSetting(TrayOptionsKey, JsonSerializer.Serialize(_trayOptions)); }
+        catch { /* settings are best-effort */ }
+    }
 
-        using var pen = new Pen(color, 1.5f);
-        float xStep = size / (float)(16 - 1);
-        float xOffset = (16 - n) * xStep;
+    private void TrayOptionsChanged()
+    {
+        SaveTrayOptions();
+        _lastTooltip = null;
+        if (_meter is { IsDisposed: false }) _meter.UseBits = _trayOptions.ShowSpeedsInBits;
+        UpdateTooltip(_lastDown, _lastUp);
+        RenderTrayIcon(force: true);
+    }
 
-        var points = new PointF[n];
-        for (int i = 0; i < n; i++)
+    private void ApplyMeterVisibility()
+    {
+        if (_trayOptions.ShowFloatingMeter)
         {
-            float x = xOffset + i * xStep;
-            float y = size - (float)(values[i] / max * size);
-            y = Math.Max(0, Math.Min(size, y));
-            points[i] = new PointF(x, y);
+            if (_meter is { IsDisposed: false })
+            {
+                _meter.Show();
+                return;
+            }
+
+            _meter = new FloatingMeterForm(SavedMeterLocation()) { UseBits = _trayOptions.ShowSpeedsInBits };
+            _meter.CloseRequested += () =>
+            {
+                _trayOptions.ShowFloatingMeter = false;
+                SaveTrayOptions();
+                ApplyMeterVisibility();
+            };
+            _meter.Moved += p =>
+            {
+                _trayOptions.MeterX = p.X;
+                _trayOptions.MeterY = p.Y;
+                SaveTrayOptions();
+            };
+            foreach (var h in _trayHistory) _meter.Push(h.Down, h.Up);
+            _meter.Show();
         }
-        g.DrawLines(pen, points);
+        else if (_meter is not null)
+        {
+            _meter.Close();
+            _meter = null;
+        }
+    }
+
+    private Point? SavedMeterLocation()
+    {
+        if (_trayOptions.MeterX == int.MinValue || _trayOptions.MeterY == int.MinValue) return null;
+
+        var p = new Point(_trayOptions.MeterX, _trayOptions.MeterY);
+        var bounds = new Rectangle(p, new Size(190, 44));
+
+        // Ignore a saved position that is no longer on any screen (monitor unplugged).
+        foreach (var screen in Screen.AllScreens)
+            if (screen.WorkingArea.IntersectsWith(bounds)) return p;
+        return null;
+    }
+
+    // ----- Tray menu --------------------------------------------------------
+
+    /// <summary>
+    /// Builds the right-click menu. It offers every option the main window's
+    /// menu bar has, so everything is reachable even when the window is hidden
+    /// or in click-through mode.
+    /// </summary>
+    private void BuildTrayMenu(ContextMenuStrip menu)
+    {
+        MenuHelper.Clear(menu.Items);
+
+        var open = new ToolStripMenuItem("Open ByteTide", null, (_, _) => ShowMain());
+        open.Font = new Font(open.Font, FontStyle.Bold);
+        menu.Items.Add(open);
+
+        var form = _mainForm is { IsDisposed: false } ? _mainForm : null;
+        if (form is not null)
+        {
+            menu.Items.Add(new ToolStripSeparator());
+
+            var adapters = new ToolStripMenuItem("Adapters");
+            form.PopulateAdaptersMenu(adapters.DropDownItems);
+            menu.Items.Add(adapters);
+
+            var view = new ToolStripMenuItem("View");
+            form.PopulateViewMenu(view.DropDownItems);
+            menu.Items.Add(view);
+
+            var window = new ToolStripMenuItem("Window");
+            form.PopulateWindowMenu(window.DropDownItems);
+            menu.Items.Add(window);
+
+            menu.Items.Add(BuildTrayIconMenu());
+
+            var tools = new ToolStripMenuItem("Tools");
+            form.PopulateToolsMenu(tools.DropDownItems, () => ShowMain(makeInteractive: false));
+            menu.Items.Add(tools);
+
+            menu.Items.Add(new ToolStripMenuItem("Reports...", null, (_, _) => { ShowMain(false); form.OpenReports(); }));
+            menu.Items.Add(new ToolStripMenuItem("Import Legacy Data...", null, (_, _) => { ShowMain(false); form.OpenImport(); }));
+            menu.Items.Add(new ToolStripSeparator());
+            menu.Items.Add(new ToolStripMenuItem("About ByteTide", null, (_, _) => { ShowMain(false); form.ShowAbout(); }));
+        }
+
+        menu.Items.Add(new ToolStripSeparator());
+        menu.Items.Add(new ToolStripMenuItem("Exit", null, (_, _) => ExitApp()));
+    }
+
+    private ToolStripMenuItem BuildTrayIconMenu()
+    {
+        var root = new ToolStripMenuItem("Tray Icon");
+
+        var style = new ToolStripMenuItem("Icon style");
+        AddStyleItem(style, "Mini graph", TrayIconStyle.MiniGraph);
+        AddStyleItem(style, "Speed numbers (download over upload)", TrayIconStyle.SpeedNumbers);
+        AddStyleItem(style, "Classic dial-up monitors", TrayIconStyle.DialupMonitors);
+        root.DropDownItems.Add(style);
+
+        var colors = new ToolStripMenuItem("Dial-up monitor colors");
+        AddPaletteItem(colors, "Green / Yellow", DialupPalette.GreenYellow);
+        AddPaletteItem(colors, "Green", DialupPalette.Green);
+        AddPaletteItem(colors, "Yellow", DialupPalette.Yellow);
+        AddPaletteItem(colors, "Blue", DialupPalette.Blue);
+        AddPaletteItem(colors, "XP Blue", DialupPalette.XpBlue);
+        AddPaletteItem(colors, "ZoneAlarm", DialupPalette.ZoneAlarm);
+        colors.DropDownItems.Add(new ToolStripSeparator());
+        AddPaletteItem(colors, "Custom", DialupPalette.Custom);
+        colors.DropDownItems.Add(new ToolStripMenuItem("Choose custom download color...", null, (_, _) => PickCustomColor(true)));
+        colors.DropDownItems.Add(new ToolStripMenuItem("Choose custom upload color...", null, (_, _) => PickCustomColor(false)));
+        root.DropDownItems.Add(colors);
+
+        root.DropDownItems.Add(new ToolStripSeparator());
+
+        var bits = new ToolStripMenuItem("Show speeds in bits (kbps / Mbps)") { Checked = _trayOptions.ShowSpeedsInBits };
+        bits.Click += (_, _) =>
+        {
+            _trayOptions.ShowSpeedsInBits = !_trayOptions.ShowSpeedsInBits;
+            TrayOptionsChanged();
+        };
+        root.DropDownItems.Add(bits);
+
+        var meter = new ToolStripMenuItem("Floating mini meter") { Checked = _trayOptions.ShowFloatingMeter };
+        meter.Click += (_, _) =>
+        {
+            _trayOptions.ShowFloatingMeter = !_trayOptions.ShowFloatingMeter;
+            SaveTrayOptions();
+            ApplyMeterVisibility();
+        };
+        root.DropDownItems.Add(meter);
+
+        return root;
+    }
+
+    private void AddStyleItem(ToolStripMenuItem parent, string text, TrayIconStyle value)
+    {
+        var item = new ToolStripMenuItem(text) { Checked = _trayOptions.Style == value };
+        item.Click += (_, _) =>
+        {
+            _trayOptions.Style = value;
+            TrayOptionsChanged();
+        };
+        parent.DropDownItems.Add(item);
+    }
+
+    private void AddPaletteItem(ToolStripMenuItem parent, string text, DialupPalette value)
+    {
+        var item = new ToolStripMenuItem(text) { Checked = _trayOptions.Palette == value };
+        item.Click += (_, _) =>
+        {
+            _trayOptions.Palette = value;
+            _trayOptions.Style = TrayIconStyle.DialupMonitors;
+            TrayOptionsChanged();
+        };
+        parent.DropDownItems.Add(item);
+    }
+
+    private void PickCustomColor(bool download)
+    {
+        using var dlg = new ColorDialog
+        {
+            FullOpen = true,
+            Color = Color.FromArgb(download ? _trayOptions.CustomDownloadArgb : _trayOptions.CustomUploadArgb)
+        };
+        if (dlg.ShowDialog() != DialogResult.OK) return;
+
+        if (download) _trayOptions.CustomDownloadArgb = dlg.Color.ToArgb();
+        else _trayOptions.CustomUploadArgb = dlg.Color.ToArgb();
+
+        _trayOptions.Palette = DialupPalette.Custom;
+        _trayOptions.Style = TrayIconStyle.DialupMonitors;
+        TrayOptionsChanged();
     }
 
     // ----- Daily rollups ----------------------------------------------------
@@ -329,10 +570,16 @@ public sealed class TrayContext : ApplicationContext
 
     // ----- Window lifecycle -------------------------------------------------
 
-    private void ShowMain()
+    /// <summary>
+    /// Brings the main window to the front. With makeInteractive (the default,
+    /// used by "Open" and double-clicking the tray icon) it also switches
+    /// click-through off -- that is the guaranteed way out of click-through mode.
+    /// </summary>
+    private void ShowMain(bool makeInteractive = true)
     {
         if (_mainForm is { IsDisposed: false })
         {
+            if (makeInteractive && _mainForm.ClickThrough) _mainForm.ClickThrough = false;
             _mainForm.Show();
             _mainForm.WindowState = FormWindowState.Normal;
             _mainForm.Activate();
@@ -340,6 +587,19 @@ public sealed class TrayContext : ApplicationContext
         }
 
         _mainForm = new MainForm(_sampler, _storage);
+        _mainForm.ExitRequested = ExitApp;
+        _mainForm.ClickThroughChanged += on =>
+        {
+            if (on)
+            {
+                _trayIcon.ShowBalloonTip(
+                    8000,
+                    "Click-through is ON",
+                    "The graph window now ignores mouse clicks. To turn it off, double-click the " +
+                    "ByteTide tray icon, or right-click it and choose Window > Click-through.",
+                    ToolTipIcon.Info);
+            }
+        };
         _mainForm.FormClosing += (_, e) =>
         {
             if (e.CloseReason == CloseReason.UserClosing)
@@ -357,6 +617,10 @@ public sealed class TrayContext : ApplicationContext
         FlushDailyStats();
         _trayIcon.Visible = false;
         _currentTrayIcon?.Dispose();
+
+        if (_meter is { IsDisposed: false }) _meter.Close();
+        _meter = null;
+        _marshal.Dispose();
 
         // Application.Exit() synchronously raises FormClosing on MainForm,
         // which saves the window position via _storage.SetSetting() -- so

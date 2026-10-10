@@ -98,6 +98,11 @@ public sealed class MainForm : Form
             try { _windowOptions = JsonSerializer.Deserialize<WindowOptions>(windowJson) ?? new WindowOptions(); }
             catch { _windowOptions = new WindowOptions(); }
         }
+
+        // Safety: click-through is deliberately NOT remembered between runs.
+        // If it were, enabling it and then closing the app would leave the
+        // window permanently unclickable on the next launch.
+        _windowOptions.ClickThrough = false;
     }
 
     private void SaveGraphOptions()
@@ -119,25 +124,52 @@ public sealed class MainForm : Form
     }
 
     // ----- Menu construction ---------------------------------------------
+    //
+    // Every dropdown is (re)built from scratch each time it opens, by a
+    // Populate*Menu method that fills ANY item collection. That lets the exact
+    // same options appear both in this window's menu bar and in the system
+    // tray icon's right-click menu -- which matters because with Click-through
+    // on, this window's menu bar can't be clicked at all.
+
+    /// <summary>Raised when click-through is switched on or off.</summary>
+    public event Action<bool>? ClickThroughChanged;
+
+    /// <summary>Set by the tray host so File &gt; Exit shuts everything down cleanly.</summary>
+    public Action? ExitRequested { get; set; }
+
+    /// <summary>Whether the window ignores mouse clicks (HUD mode). Never persisted across runs.</summary>
+    public bool ClickThrough
+    {
+        get => _windowOptions.ClickThrough;
+        set
+        {
+            if (_windowOptions.ClickThrough == value) return;
+            _windowOptions.ClickThrough = value;
+            SaveWindowOptions();
+            ApplyClickThrough();
+            ClickThroughChanged?.Invoke(value);
+        }
+    }
+
+    private void RequestExit()
+    {
+        if (ExitRequested is not null) ExitRequested();
+        else Application.Exit();
+    }
 
     private void BuildMenu()
     {
         var file = new ToolStripMenuItem("File");
         file.DropDownItems.Add("Import Legacy Data...", null, (_, _) => OpenImport());
         file.DropDownItems.Add(new ToolStripSeparator());
-        file.DropDownItems.Add("Exit", null, (_, _) => Application.Exit());
+        file.DropDownItems.Add("Exit", null, (_, _) => RequestExit());
 
-        _adaptersMenu.DropDownOpening += (_, _) => RebuildAdaptersMenu();
-        RebuildAdaptersMenu();
-
-        BuildViewMenu();
-        BuildWindowMenu();
+        HookDynamicMenu(_adaptersMenu, PopulateAdaptersMenu);
+        HookDynamicMenu(_viewMenu, PopulateViewMenu);
+        HookDynamicMenu(_windowMenu, PopulateWindowMenu);
 
         var tools = new ToolStripMenuItem("Tools");
-        tools.DropDownItems.Add("Rates Recorder...", null, (_, _) => OpenRatesRecorder());
-        tools.DropDownItems.Add("Traffic Stopwatch...", null, (_, _) => OpenStopwatch());
-        tools.DropDownItems.Add(new ToolStripSeparator());
-        tools.DropDownItems.Add("Bandwidth Usage Notifications...", null, (_, _) => OpenNotifications());
+        HookDynamicMenu(tools, items => PopulateToolsMenu(items, null));
 
         var reports = new ToolStripMenuItem("Reports");
         reports.DropDownItems.Add("Daily / Weekly / Monthly / Yearly...", null, (_, _) => OpenReports());
@@ -154,37 +186,70 @@ public sealed class MainForm : Form
         _menu.Items.Add(about);
     }
 
-    private void BuildViewMenu()
+    private static void HookDynamicMenu(ToolStripMenuItem menu, Action<ToolStripItemCollection> populate)
     {
-        AddToggle(_viewMenu, "Title", () => _graphOptions.ShowTitle, v => _graphOptions.ShowTitle = v);
-        AddToggle(_viewMenu, "IP Address", () => _graphOptions.ShowIpAddress, v => _graphOptions.ShowIpAddress = v);
-        _viewMenu.DropDownItems.Add(new ToolStripSeparator());
+        populate(menu.DropDownItems);
+        menu.DropDownOpening += (_, _) =>
+        {
+            MenuHelper.Clear(menu.DropDownItems);
+            populate(menu.DropDownItems);
+        };
+    }
 
-        var areaItem = new ToolStripMenuItem("Graph (Area)") { CheckOnClick = false };
-        var columnItem = new ToolStripMenuItem("Column Graph") { CheckOnClick = false };
-        areaItem.Click += (_, _) => { _graphOptions.ColumnStyle = false; RefreshStyleChecks(areaItem, columnItem, false); SaveGraphOptions(); };
-        columnItem.Click += (_, _) => { _graphOptions.ColumnStyle = true; RefreshStyleChecks(areaItem, columnItem, true); SaveGraphOptions(); };
+    /// <summary>
+    /// Rebuilt every time it's opened, so adapters that appear/disappear
+    /// (USB NICs, VPNs connecting/disconnecting) are reflected without restarting.
+    /// </summary>
+    public void PopulateAdaptersMenu(ToolStripItemCollection items)
+    {
+        var allItem = new ToolStripMenuItem("All Connections") { Checked = _selectedAdapterId is null };
+        allItem.Click += (_, _) => SelectAdapter(null);
+        items.Add(allItem);
+        items.Add(new ToolStripSeparator());
+
+        foreach (var nic in NetworkInterface.GetAllNetworkInterfaces())
+        {
+            if (nic.OperationalStatus != OperationalStatus.Up) continue;
+            if (nic.NetworkInterfaceType == NetworkInterfaceType.Loopback) continue;
+
+            var id = nic.Id;
+            var item = new ToolStripMenuItem(nic.Description) { Checked = _selectedAdapterId == id };
+            item.Click += (_, _) => SelectAdapter(id);
+            items.Add(item);
+        }
+    }
+
+    public void PopulateViewMenu(ToolStripItemCollection items)
+    {
+        AddToggle(items, "Title", () => _graphOptions.ShowTitle, v => _graphOptions.ShowTitle = v);
+        AddToggle(items, "IP Address", () => _graphOptions.ShowIpAddress, v => _graphOptions.ShowIpAddress = v);
+        items.Add(new ToolStripSeparator());
+
+        var areaItem = new ToolStripMenuItem("Graph (Area)");
+        var columnItem = new ToolStripMenuItem("Column Graph");
+        areaItem.Click += (_, _) => { _graphOptions.ColumnStyle = false; SaveGraphOptions(); };
+        columnItem.Click += (_, _) => { _graphOptions.ColumnStyle = true; SaveGraphOptions(); };
         RefreshStyleChecks(areaItem, columnItem, _graphOptions.ColumnStyle);
-        _viewMenu.DropDownItems.Add(areaItem);
-        _viewMenu.DropDownItems.Add(columnItem);
-        _viewMenu.DropDownItems.Add(new ToolStripSeparator());
+        items.Add(areaItem);
+        items.Add(columnItem);
+        items.Add(new ToolStripSeparator());
 
-        AddToggle(_viewMenu, "Scale", () => _graphOptions.ShowScale, v => _graphOptions.ShowScale = v);
-        AddToggle(_viewMenu, "Scale Grid", () => _graphOptions.ShowScaleGrid, v => _graphOptions.ShowScaleGrid = v);
-        AddToggle(_viewMenu, "Time", () => _graphOptions.ShowTime, v => _graphOptions.ShowTime = v);
-        AddToggle(_viewMenu, "Time Grid", () => _graphOptions.ShowTimeGrid, v => _graphOptions.ShowTimeGrid = v);
-        _viewMenu.DropDownItems.Add(new ToolStripSeparator());
+        AddToggle(items, "Scale", () => _graphOptions.ShowScale, v => _graphOptions.ShowScale = v);
+        AddToggle(items, "Scale Grid", () => _graphOptions.ShowScaleGrid, v => _graphOptions.ShowScaleGrid = v);
+        AddToggle(items, "Time", () => _graphOptions.ShowTime, v => _graphOptions.ShowTime = v);
+        AddToggle(items, "Time Grid", () => _graphOptions.ShowTimeGrid, v => _graphOptions.ShowTimeGrid = v);
+        items.Add(new ToolStripSeparator());
 
-        AddToggle(_viewMenu, "Average Download Line", () => _graphOptions.ShowAverageDownloadLine, v => _graphOptions.ShowAverageDownloadLine = v);
-        AddToggle(_viewMenu, "Average Upload Line", () => _graphOptions.ShowAverageUploadLine, v => _graphOptions.ShowAverageUploadLine = v);
-        _viewMenu.DropDownItems.Add(new ToolStripSeparator());
+        AddToggle(items, "Average Download Line", () => _graphOptions.ShowAverageDownloadLine, v => _graphOptions.ShowAverageDownloadLine = v);
+        AddToggle(items, "Average Upload Line", () => _graphOptions.ShowAverageUploadLine, v => _graphOptions.ShowAverageUploadLine = v);
+        items.Add(new ToolStripSeparator());
 
-        AddToggle(_viewMenu, "Text", () => _graphOptions.ShowText, v => _graphOptions.ShowText = v);
-        AddToggle(_viewMenu, "Max Rate", () => _graphOptions.ShowMaxRate, v => _graphOptions.ShowMaxRate = v);
-        AddToggle(_viewMenu, "Average Speeds", () => _graphOptions.ShowAverageSpeeds, v => _graphOptions.ShowAverageSpeeds = v);
-        _viewMenu.DropDownItems.Add(new ToolStripSeparator());
+        AddToggle(items, "Text", () => _graphOptions.ShowText, v => _graphOptions.ShowText = v);
+        AddToggle(items, "Max Rate", () => _graphOptions.ShowMaxRate, v => _graphOptions.ShowMaxRate = v);
+        AddToggle(items, "Average Speeds", () => _graphOptions.ShowAverageSpeeds, v => _graphOptions.ShowAverageSpeeds = v);
+        items.Add(new ToolStripSeparator());
 
-        AddToggle(_viewMenu, "Use kbps (instead of KB/s)", () => _graphOptions.UseKbps, v => _graphOptions.UseKbps = v);
+        AddToggle(items, "Use kbps (instead of KB/s)", () => _graphOptions.UseKbps, v => _graphOptions.UseKbps = v);
     }
 
     private static void RefreshStyleChecks(ToolStripMenuItem area, ToolStripMenuItem column, bool columnStyle)
@@ -193,43 +258,38 @@ public sealed class MainForm : Form
         column.Checked = columnStyle;
     }
 
-    private void AddToggle(ToolStripMenuItem parent, string text, Func<bool> getter, Action<bool> setter)
+    private void AddToggle(ToolStripItemCollection parent, string text, Func<bool> getter, Action<bool> setter)
     {
-        var item = new ToolStripMenuItem(text) { CheckOnClick = true, Checked = getter() };
+        var item = new ToolStripMenuItem(text) { Checked = getter() };
         item.Click += (_, _) =>
         {
-            setter(item.Checked);
+            setter(!getter());
             SaveGraphOptions();
         };
-        parent.DropDownItems.Add(item);
+        parent.Add(item);
     }
 
-    private void BuildWindowMenu()
+    public void PopulateWindowMenu(ToolStripItemCollection items)
     {
-        var alwaysOnTop = new ToolStripMenuItem("Always on Top") { CheckOnClick = true, Checked = _windowOptions.AlwaysOnTop };
+        var alwaysOnTop = new ToolStripMenuItem("Always on Top") { Checked = _windowOptions.AlwaysOnTop };
         alwaysOnTop.Click += (_, _) =>
         {
-            _windowOptions.AlwaysOnTop = alwaysOnTop.Checked;
+            _windowOptions.AlwaysOnTop = !_windowOptions.AlwaysOnTop;
             TopMost = _windowOptions.AlwaysOnTop;
             SaveWindowOptions();
         };
 
-        var semiTransparent = new ToolStripMenuItem("Semi-transparent") { CheckOnClick = true, Checked = _windowOptions.SemiTransparent };
+        var semiTransparent = new ToolStripMenuItem("Semi-transparent") { Checked = _windowOptions.SemiTransparent };
         semiTransparent.Click += (_, _) =>
         {
-            _windowOptions.SemiTransparent = semiTransparent.Checked;
+            _windowOptions.SemiTransparent = !_windowOptions.SemiTransparent;
             Opacity = _windowOptions.SemiTransparent ? 0.85 : 1.0;
             SaveWindowOptions();
             ApplyClickThrough(); // alpha for click-through should track current opacity
         };
 
-        var clickThrough = new ToolStripMenuItem("Click-through") { CheckOnClick = true, Checked = _windowOptions.ClickThrough };
-        clickThrough.Click += (_, _) =>
-        {
-            _windowOptions.ClickThrough = clickThrough.Checked;
-            SaveWindowOptions();
-            ApplyClickThrough();
-        };
+        var clickThrough = new ToolStripMenuItem("Click-through (undo from the tray icon)") { Checked = _windowOptions.ClickThrough };
+        clickThrough.Click += (_, _) => ClickThrough = !ClickThrough;
 
         var resetPosition = new ToolStripMenuItem("Reset Window Position");
         resetPosition.Click += (_, _) =>
@@ -243,11 +303,20 @@ public sealed class MainForm : Form
             SaveWindowOptions();
         };
 
-        _windowMenu.DropDownItems.Add(alwaysOnTop);
-        _windowMenu.DropDownItems.Add(semiTransparent);
-        _windowMenu.DropDownItems.Add(clickThrough);
-        _windowMenu.DropDownItems.Add(new ToolStripSeparator());
-        _windowMenu.DropDownItems.Add(resetPosition);
+        items.Add(alwaysOnTop);
+        items.Add(semiTransparent);
+        items.Add(clickThrough);
+        items.Add(new ToolStripSeparator());
+        items.Add(resetPosition);
+    }
+
+    /// <param name="beforeOpen">Optional action run before a dialog opens (the tray uses it to show this window first).</param>
+    public void PopulateToolsMenu(ToolStripItemCollection items, Action? beforeOpen)
+    {
+        items.Add("Rates Recorder...", null, (_, _) => { beforeOpen?.Invoke(); OpenRatesRecorder(); });
+        items.Add("Traffic Stopwatch...", null, (_, _) => { beforeOpen?.Invoke(); OpenStopwatch(); });
+        items.Add(new ToolStripSeparator());
+        items.Add("Bandwidth Usage Notifications...", null, (_, _) => { beforeOpen?.Invoke(); OpenNotifications(); });
     }
 
     private void ApplyClickThrough()
@@ -257,7 +326,7 @@ public sealed class MainForm : Form
         NativeMethods.SetClickThrough(Handle, _windowOptions.ClickThrough, alpha);
     }
 
-    private void ShowAbout()
+    public void ShowAbout()
     {
         MessageBox.Show(
             this,
@@ -269,32 +338,6 @@ public sealed class MainForm : Form
             "About ByteTide",
             MessageBoxButtons.OK,
             MessageBoxIcon.Information);
-    }
-
-    /// <summary>
-    /// Rebuilds the Adapters menu from the current live adapter list every
-    /// time it's opened, so adapters that appear/disappear (USB NICs, VPNs
-    /// connecting/disconnecting) are reflected without restarting the app.
-    /// </summary>
-    private void RebuildAdaptersMenu()
-    {
-        _adaptersMenu.DropDownItems.Clear();
-
-        var allItem = new ToolStripMenuItem("All Connections") { Checked = _selectedAdapterId is null };
-        allItem.Click += (_, _) => SelectAdapter(null);
-        _adaptersMenu.DropDownItems.Add(allItem);
-        _adaptersMenu.DropDownItems.Add(new ToolStripSeparator());
-
-        foreach (var nic in NetworkInterface.GetAllNetworkInterfaces())
-        {
-            if (nic.OperationalStatus != OperationalStatus.Up) continue;
-            if (nic.NetworkInterfaceType == NetworkInterfaceType.Loopback) continue;
-
-            var id = nic.Id;
-            var item = new ToolStripMenuItem(nic.Description) { Checked = _selectedAdapterId == id };
-            item.Click += (_, _) => SelectAdapter(id);
-            _adaptersMenu.DropDownItems.Add(item);
-        }
     }
 
     private void SelectAdapter(string? adapterId)
@@ -459,31 +502,31 @@ public sealed class MainForm : Form
         return $"{b:0.##} {units[i]}";
     }
 
-    private void OpenImport()
+    public void OpenImport()
     {
         using var dlg = new ImportForm(_storage);
         dlg.ShowDialog(this);
     }
 
-    private void OpenReports()
+    public void OpenReports()
     {
         using var dlg = new ReportsForm(_storage);
         dlg.ShowDialog(this);
     }
 
-    private void OpenRatesRecorder()
+    public void OpenRatesRecorder()
     {
         using var dlg = new RatesRecorderForm(_sampler);
         dlg.ShowDialog(this);
     }
 
-    private void OpenStopwatch()
+    public void OpenStopwatch()
     {
         using var dlg = new StopwatchForm(_sampler);
         dlg.ShowDialog(this);
     }
 
-    private void OpenNotifications()
+    public void OpenNotifications()
     {
         using var dlg = new NotificationsForm(_storage);
         dlg.ShowDialog(this);
