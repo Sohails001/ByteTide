@@ -46,7 +46,9 @@ Closing the window just hides it to the system tray. Sampling and daily totals k
 
 **Live monitoring**
 - Real-time download/upload graph (filled-area or column style)
-- Tray icon that is itself a live mini-graph
+- Tray icon with three styles: live mini-graph, speed numbers, or classic dial-up monitors (several color sets)
+- Hover tool-tip and an optional floating mini meter with readable speeds
+- Full tray right-click menu with every option from the main window
 - Status bar with link speed, uptime, clock, and session totals
 - Watch one adapter (Ethernet, Wi-Fi, VPN…) or all combined
 
