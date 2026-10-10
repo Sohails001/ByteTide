@@ -1,0 +1,23 @@
+
+## .NET
+bin/
+obj/
+out/
+
+## Visual Studio
+.vs/
+*.user
+*.suo
+
+## Rider
+.idea/
+
+## VS Code
+.vscode/
+
+## Misc
+*.log
+*.db
+*.db-shm
+*.db-wal
+
