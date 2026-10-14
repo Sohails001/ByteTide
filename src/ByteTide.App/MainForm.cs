@@ -30,10 +30,11 @@ public sealed class MainForm : Form
     /// <summary>Null means "All Connections" (combine every adapter).</summary>
     private string? _selectedAdapterId;
 
-    // Tracks cumulative bytes-at-selection-start per adapter, so the status
-    // bar's D/L and U/L totals reflect "since this adapter/filter was chosen"
-    // rather than since-boot NIC lifetime counters.
-    private readonly Dictionary<string, (long RxBaseline, long TxBaseline, long RxLast, long TxLast)> _totals = new();
+    // Running totals for the status bar, built by adding each sample's
+    // reset-safe byte deltas ("since this adapter/filter was chosen").
+    private long _sessionRx;
+    private long _sessionTx;
+    private readonly object _sessionLock = new();
 
     private const string GraphOptionsKey = "graphOptions";
     private const string WindowOptionsKey = "windowOptions";
@@ -90,6 +91,13 @@ public sealed class MainForm : Form
         {
             try { _graphOptions = JsonSerializer.Deserialize<GraphOptions>(graphJson) ?? new GraphOptions(); }
             catch { _graphOptions = new GraphOptions(); }
+
+            // Older builds stored the graph style as a single true/false flag.
+            if (_graphOptions.ColumnStyle)
+            {
+                _graphOptions.Style = GraphStyle.Column;
+                _graphOptions.ColumnStyle = false;
+            }
         }
 
         var windowJson = _storage.GetSetting(WindowOptionsKey);
@@ -159,6 +167,12 @@ public sealed class MainForm : Form
 
     private void BuildMenu()
     {
+        _menu.Renderer = new DarkMenuRenderer();
+        _menu.BackColor = Theme.DarkSurface;
+        _menu.ForeColor = Theme.DarkText;
+        _menu.Font = Theme.Ui(9f);
+        _menu.Padding = new Padding(6, 3, 0, 3);
+
         var file = new ToolStripMenuItem("File");
         file.DropDownItems.Add("Import Legacy Data...", null, (_, _) => OpenImport());
         file.DropDownItems.Add(new ToolStripSeparator());
@@ -217,6 +231,55 @@ public sealed class MainForm : Form
             item.Click += (_, _) => SelectAdapter(id);
             items.Add(item);
         }
+
+        // Which adapters add up to "All Connections". Virtual/VPN adapters are
+        // off by default because their traffic is already counted on the
+        // physical adapter underneath them.
+        var counted = new ToolStripMenuItem("Count in All Connections");
+        foreach (var nic in NetworkInterface.GetAllNetworkInterfaces())
+        {
+            if (nic.OperationalStatus != OperationalStatus.Up) continue;
+            if (nic.NetworkInterfaceType == NetworkInterfaceType.Loopback) continue;
+
+            var id = nic.Id;
+            bool virt = AdapterFilter.LooksVirtual(nic);
+            var item = new ToolStripMenuItem(nic.Description + (virt ? "  (virtual / VPN)" : ""))
+            {
+                Checked = _sampler.IsTracked(nic)
+            };
+            item.Click += (_, _) => ToggleCounted(id, virt);
+            counted.DropDownItems.Add(item);
+        }
+
+        if (counted.DropDownItems.Count > 0)
+        {
+            items.Add(new ToolStripSeparator());
+            items.Add(counted);
+        }
+    }
+
+    private void ToggleCounted(string adapterId, bool looksVirtual)
+    {
+        var excluded = new HashSet<string>(_sampler.ExcludedAdapterIds);
+        var forced = new HashSet<string>(_sampler.ForcedIncludedAdapterIds);
+
+        bool trackedNow = excluded.Contains(adapterId) ? false : forced.Contains(adapterId) ? true : !looksVirtual;
+
+        if (trackedNow)
+        {
+            excluded.Add(adapterId);
+            forced.Remove(adapterId);
+        }
+        else
+        {
+            excluded.Remove(adapterId);
+            if (looksVirtual) forced.Add(adapterId);
+        }
+
+        _sampler.SetExcludedAdapterIds(excluded);
+        _sampler.SetForcedIncludedAdapterIds(forced);
+        AdapterSettings.Save(_storage, _sampler);
+        ResetSessionTotals();
     }
 
     public void PopulateViewMenu(ToolStripItemCollection items)
@@ -225,13 +288,23 @@ public sealed class MainForm : Form
         AddToggle(items, "IP Address", () => _graphOptions.ShowIpAddress, v => _graphOptions.ShowIpAddress = v);
         items.Add(new ToolStripSeparator());
 
-        var areaItem = new ToolStripMenuItem("Graph (Area)");
-        var columnItem = new ToolStripMenuItem("Column Graph");
-        areaItem.Click += (_, _) => { _graphOptions.ColumnStyle = false; SaveGraphOptions(); };
-        columnItem.Click += (_, _) => { _graphOptions.ColumnStyle = true; SaveGraphOptions(); };
-        RefreshStyleChecks(areaItem, columnItem, _graphOptions.ColumnStyle);
-        items.Add(areaItem);
-        items.Add(columnItem);
+        AddStyleItem(items, "Graph (Area)", GraphStyle.Area);
+        AddStyleItem(items, "Column Graph", GraphStyle.Column);
+        AddStyleItem(items, "Line Graph", GraphStyle.Line);
+
+        var widthMenu = new ToolStripMenuItem("Graph width (pixels per second)");
+        foreach (var px in new[] { 1, 2, 3, 4, 6 })
+        {
+            int value = px;
+            var item = new ToolStripMenuItem(px == 1 ? "1 pixel" : px + " pixels") { Checked = _graphOptions.PixelsPerSecond == value };
+            item.Click += (_, _) =>
+            {
+                _graphOptions.PixelsPerSecond = value;
+                SaveGraphOptions();
+            };
+            widthMenu.DropDownItems.Add(item);
+        }
+        items.Add(widthMenu);
         items.Add(new ToolStripSeparator());
 
         AddToggle(items, "Scale", () => _graphOptions.ShowScale, v => _graphOptions.ShowScale = v);
@@ -252,10 +325,15 @@ public sealed class MainForm : Form
         AddToggle(items, "Use kbps (instead of KB/s)", () => _graphOptions.UseKbps, v => _graphOptions.UseKbps = v);
     }
 
-    private static void RefreshStyleChecks(ToolStripMenuItem area, ToolStripMenuItem column, bool columnStyle)
+    private void AddStyleItem(ToolStripItemCollection items, string text, GraphStyle style)
     {
-        area.Checked = !columnStyle;
-        column.Checked = columnStyle;
+        var item = new ToolStripMenuItem(text) { Checked = _graphOptions.Style == style };
+        item.Click += (_, _) =>
+        {
+            _graphOptions.Style = style;
+            SaveGraphOptions();
+        };
+        items.Add(item);
     }
 
     private void AddToggle(ToolStripItemCollection parent, string text, Func<bool> getter, Action<bool> setter)
@@ -319,6 +397,21 @@ public sealed class MainForm : Form
         items.Add("Bandwidth Usage Notifications...", null, (_, _) => { beforeOpen?.Invoke(); OpenNotifications(); });
     }
 
+    private void ResetSessionTotals()
+    {
+        lock (_sessionLock)
+        {
+            _sessionRx = 0;
+            _sessionTx = 0;
+        }
+    }
+
+    protected override void OnHandleCreated(EventArgs e)
+    {
+        base.OnHandleCreated(e);
+        NativeMethods.UseDarkTitleBar(Handle, true);
+    }
+
     private void ApplyClickThrough()
     {
         if (!IsHandleCreated) return;
@@ -328,22 +421,14 @@ public sealed class MainForm : Form
 
     public void ShowAbout()
     {
-        MessageBox.Show(
-            this,
-            "ByteTide\n\n" +
-            "Created by Sohail Sher Ali.\n\n" +
-            "An open-source network traffic monitor, built as a modern replacement\n" +
-            "for classic Windows bandwidth monitors, with support for importing\n" +
-            "legacy RAS Graph & Stats history.",
-            "About ByteTide",
-            MessageBoxButtons.OK,
-            MessageBoxIcon.Information);
+        using var dlg = new AboutForm();
+        dlg.ShowDialog(this);
     }
 
     private void SelectAdapter(string? adapterId)
     {
         _selectedAdapterId = adapterId;
-        _totals.Clear();
+        ResetSessionTotals();
         _graph.Clear();
         UpdateGraphAdapterLabel();
     }
@@ -379,7 +464,9 @@ public sealed class MainForm : Form
         // theme -- keeps it visually consistent with the black graph background
         // and, more importantly, guarantees the text renders in a color that's
         // never accidentally invisible against it.
-        _status.BackColor = Color.FromArgb(20, 20, 20);
+        _status.Renderer = new DarkMenuRenderer();
+        _status.Font = Theme.Ui(9f);
+        _status.BackColor = Color.FromArgb(20, 20, 24);
         _status.SizingGrip = false;
 
         _lblLinkSpeed.ForeColor = StatusTextColor;
@@ -414,21 +501,17 @@ public sealed class MainForm : Form
         double totalDown = included.Sum(s => s.DownloadBps);
         double totalUp = included.Sum(s => s.UploadBps);
 
-        foreach (var s in included)
-        {
-            if (!_totals.TryGetValue(s.AdapterId, out var t))
-            {
-                t = (s.BytesReceived, s.BytesSent, s.BytesReceived, s.BytesSent);
-            }
-            else
-            {
-                t = (t.RxBaseline, t.TxBaseline, s.BytesReceived, s.BytesSent);
-            }
-            _totals[s.AdapterId] = t;
-        }
+        long deltaRx = included.Sum(s => s.DeltaBytesReceived);
+        long deltaTx = included.Sum(s => s.DeltaBytesSent);
 
-        long sessionRx = _totals.Values.Sum(t => Math.Max(0, t.RxLast - t.RxBaseline));
-        long sessionTx = _totals.Values.Sum(t => Math.Max(0, t.TxLast - t.TxBaseline));
+        long sessionRx, sessionTx;
+        lock (_sessionLock)
+        {
+            _sessionRx += deltaRx;
+            _sessionTx += deltaTx;
+            sessionRx = _sessionRx;
+            sessionTx = _sessionTx;
+        }
 
         double? linkSpeedMbps = null;
         string? adapterForSpeed = _selectedAdapterId;
@@ -517,18 +600,21 @@ public sealed class MainForm : Form
     public void OpenRatesRecorder()
     {
         using var dlg = new RatesRecorderForm(_sampler);
+        Theme.ApplyDialog(dlg);
         dlg.ShowDialog(this);
     }
 
     public void OpenStopwatch()
     {
         using var dlg = new StopwatchForm(_sampler);
+        Theme.ApplyDialog(dlg);
         dlg.ShowDialog(this);
     }
 
     public void OpenNotifications()
     {
         using var dlg = new NotificationsForm(_storage);
+        Theme.ApplyDialog(dlg);
         dlg.ShowDialog(this);
     }
 }

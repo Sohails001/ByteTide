@@ -8,7 +8,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <LangVersion>latest</LangVersion>
     <AssemblyName>ByteTide</AssemblyName>
-    <Version>1.0.1</Version>
+    <Version>1.0.2</Version>
     <RootNamespace>ByteTide.App</RootNamespace>
     <!-- This only ever runs on Windows (WinForms). Locking to a single RID
          means only win-x64's native SQLite binaries get copied into build

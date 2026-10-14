@@ -88,6 +88,7 @@ public sealed class NotificationsForm : Form
         _emailSettingsBtn.Click += (_, _) =>
         {
             using var dlg = new EmailSettingsForm(_emailSettings);
+            Theme.ApplyDialog(dlg);
             if (dlg.ShowDialog(this) == DialogResult.OK) _emailSettings = dlg.Result;
         };
 

@@ -24,7 +24,7 @@ public sealed class TrayContext : ApplicationContext
     private readonly NetworkSampler _sampler;
     private readonly Storage _storage;
     private readonly System.Windows.Forms.Timer _rollupTimer;
-    private readonly Dictionary<string, DailyAccumulator> _today = new();
+    private readonly DailyRollupTracker _rollup = new();
     private MainForm? _mainForm;
 
     private readonly List<(double Down, double Up)> _trayHistory = new();
@@ -75,6 +75,7 @@ public sealed class TrayContext : ApplicationContext
         LoadTrayOptions();
 
         _sampler = new NetworkSampler(TimeSpan.FromSeconds(1));
+        AdapterSettings.Load(_storage, _sampler);
         _sampler.SamplesReady += OnSamples;
 
         // The tray menu mirrors the main window's menu bar (see BuildTrayMenu)
@@ -107,27 +108,11 @@ public sealed class TrayContext : ApplicationContext
 
     private void OnSamples(IReadOnlyList<LiveSample> samples)
     {
-        var today = DateOnly.FromDateTime(DateTime.Today);
-
         foreach (var sample in samples)
-        {
             _storage.InsertLiveSample(sample);
 
-            if (!_today.TryGetValue(sample.AdapterId, out var acc) || acc.Date != today)
-            {
-                acc = new DailyAccumulator
-                {
-                    Date = today,
-                    StartBytesReceived = sample.BytesReceived,
-                    StartBytesSent = sample.BytesSent
-                };
-                _today[sample.AdapterId] = acc;
-            }
-
-            acc.SecondsOnline += 1;
-            acc.LastBytesReceived = sample.BytesReceived;
-            acc.LastBytesSent = sample.BytesSent;
-        }
+        // Accumulate usage into the daily totals (flushed additively once a minute).
+        _rollup.RecordSamples(samples);
 
         double down = samples.Sum(s => s.DownloadBps);
         double up = samples.Sum(s => s.UploadBps);
@@ -437,27 +422,9 @@ public sealed class TrayContext : ApplicationContext
 
     private void FlushDailyStats()
     {
-        var today = DateOnly.FromDateTime(DateTime.Today);
-
-        foreach (var nic in NetworkInterface.GetAllNetworkInterfaces())
-        {
-            if (!_today.TryGetValue(nic.Id, out var acc) || acc.Date != today) continue;
-
-            var info = NetworkSampler.GetAdapterInfo(nic);
-            long rx = Math.Max(0, acc.LastBytesReceived - acc.StartBytesReceived);
-            long tx = Math.Max(0, acc.LastBytesSent - acc.StartBytesSent);
-
-            _storage.UpsertDailyStat(new DailyStat
-            {
-                Date = today,
-                AdapterName = info.Name,
-                MacAddress = info.MacAddress,
-                SecondsOnline = acc.SecondsOnline,
-                BytesReceived = rx,
-                BytesSent = tx
-            });
-        }
-
+        // Adds what has accumulated since the last flush to the stored day, so
+        // restarting the app mid-day (or an adapter reconnecting) loses nothing.
+        _rollup.Flush(_storage);
         _storage.PruneLiveSamplesOlderThan(TimeSpan.FromHours(48));
     }
 
@@ -630,15 +597,5 @@ public sealed class TrayContext : ApplicationContext
 
         _sampler.Dispose();
         _storage.Dispose();
-    }
-
-    private sealed class DailyAccumulator
-    {
-        public DateOnly Date;
-        public long StartBytesReceived;
-        public long StartBytesSent;
-        public long LastBytesReceived;
-        public long LastBytesSent;
-        public long SecondsOnline;
     }
 }

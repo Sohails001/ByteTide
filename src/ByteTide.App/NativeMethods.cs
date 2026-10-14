@@ -32,6 +32,25 @@ internal static class NativeMethods
     [DllImport("user32.dll")]
     public static extern bool DestroyIcon(IntPtr handle);
 
+    [DllImport("dwmapi.dll")]
+    private static extern int DwmSetWindowAttribute(IntPtr hwnd, int attribute, ref int value, int size);
+
+    /// <summary>Gives the window a dark title bar on Windows 10 (20H1+) / 11. Silently does nothing elsewhere.</summary>
+    public static void UseDarkTitleBar(IntPtr handle, bool dark)
+    {
+        try
+        {
+            int value = dark ? 1 : 0;
+            // 20 = DWMWA_USE_IMMERSIVE_DARK_MODE (19 on early Windows 10 builds)
+            if (DwmSetWindowAttribute(handle, 20, ref value, sizeof(int)) != 0)
+                DwmSetWindowAttribute(handle, 19, ref value, sizeof(int));
+        }
+        catch
+        {
+            // Cosmetic only.
+        }
+    }
+
     private static IntPtr GetWindowExStyle(IntPtr hWnd) =>
         IntPtr.Size == 8 ? GetWindowLongPtr64(hWnd, GWL_EXSTYLE) : new IntPtr(GetWindowLong32(hWnd, GWL_EXSTYLE));
 

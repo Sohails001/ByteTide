@@ -3,10 +3,9 @@ using ByteTide.Core;
 namespace ByteTide.App;
 
 /// <summary>
-/// Tabbed traffic reports window: Summary, Daily, Weekly, Monthly, and
-/// Yearly breakdowns -- all filterable by adapter, sortable by clicking any
-/// column header (click again to flip direction), with CSV export and a
-/// clear-history action.
+/// Traffic reports: Summary, Daily, Weekly, Monthly and Yearly breakdowns,
+/// filterable by adapter and sortable by clicking any column header, with CSV
+/// export, a way to delete bad days, and a clear-history action.
 /// </summary>
 public sealed class ReportsForm : Form
 {
@@ -25,8 +24,7 @@ public sealed class ReportsForm : Form
     private readonly Storage _storage;
     private readonly Dictionary<DataGridView, GridState> _gridStates = new();
 
-    private readonly ComboBox _adapterFilter = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 220 };
-    private readonly TabControl _tabs = new() { Dock = DockStyle.Fill };
+    private readonly ComboBox _adapterFilter = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 260, FlatStyle = FlatStyle.Flat };
 
     private readonly DataGridView _summaryGrid = MakeGrid();
     private readonly DataGridView _dailyGrid = MakeGrid();
@@ -34,8 +32,12 @@ public sealed class ReportsForm : Form
     private readonly DataGridView _monthlyGrid = MakeGrid();
     private readonly DataGridView _yearlyGrid = MakeGrid();
 
-    private readonly Button _export = new() { Text = "Export..." };
-    private readonly Button _clear = new() { Text = "Clear..." };
+    private readonly List<(string Title, DataGridView Grid, Button Tab)> _tabs = new();
+    private int _selectedTab = 1; // open on Daily, like the original program
+
+    private readonly Button _export = new() { Text = "Export CSV..." };
+    private readonly Button _deleteDays = new() { Text = "Delete days..." };
+    private readonly Button _clear = new() { Text = "Clear all..." };
     private readonly Button _close = new() { Text = "Close" };
 
     public ReportsForm(Storage storage)
@@ -43,35 +45,60 @@ public sealed class ReportsForm : Form
         _storage = storage;
 
         Text = "Traffic Reports";
-        Width = 840;
-        Height = 560;
+        ClientSize = new Size(900, 600);
+        MinimumSize = new Size(720, 420);
         StartPosition = FormStartPosition.CenterParent;
+        BackColor = Theme.Surface;
+        Font = Theme.Ui();
 
-        var top = new FlowLayoutPanel
+        // ----- Header: title + adapter picker
+        var header = new Panel { Dock = DockStyle.Top, Height = 74, BackColor = Theme.Surface };
+        var title = new Label
+        {
+            Text = "Traffic Reports",
+            Font = Theme.UiSemibold(16f),
+            ForeColor = Theme.TextPrimary,
+            AutoSize = true,
+            Location = new Point(20, 12)
+        };
+        var subtitle = new Label
+        {
+            Text = "Time is the longest connected time among your adapters each day.",
+            ForeColor = Theme.TextMuted,
+            Font = Theme.Ui(8.5f),
+            AutoSize = true,
+            Location = new Point(22, 46)
+        };
+        var adapterLabel = new Label
+        {
+            Text = "Adapter",
+            ForeColor = Theme.TextMuted,
+            AutoSize = true,
+            Anchor = AnchorStyles.Top | AnchorStyles.Right,
+            Location = new Point(ClientSize.Width - 340, 24)
+        };
+        _adapterFilter.Anchor = AnchorStyles.Top | AnchorStyles.Right;
+        _adapterFilter.Location = new Point(ClientSize.Width - 280, 20);
+        _adapterFilter.SelectedIndexChanged += (_, _) => LoadAll();
+        header.Controls.AddRange(new Control[] { title, subtitle, adapterLabel, _adapterFilter });
+
+        // ----- Tab strip
+        var tabBar = new FlowLayoutPanel
         {
             Dock = DockStyle.Top,
-            AutoSize = true,
-            AutoSizeMode = AutoSizeMode.GrowAndShrink,
-            Padding = new Padding(8)
+            Height = 44,
+            BackColor = Theme.Surface,
+            Padding = new Padding(14, 4, 0, 0),
+            WrapContents = false
         };
-        top.Controls.Add(new Label { Text = "Adapter:", AutoSize = true, Padding = new Padding(0, 6, 6, 0) });
-        top.Controls.Add(_adapterFilter);
-        _adapterFilter.SelectedIndexChanged += (_, _) => LoadAll();
-
-        var bottom = new FlowLayoutPanel
+        tabBar.Paint += (_, e) =>
         {
-            Dock = DockStyle.Bottom,
-            AutoSize = true,
-            AutoSizeMode = AutoSizeMode.GrowAndShrink,
-            Padding = new Padding(8),
-            FlowDirection = FlowDirection.RightToLeft
+            using var pen = new Pen(Theme.Border);
+            e.Graphics.DrawLine(pen, 0, tabBar.Height - 1, tabBar.Width, tabBar.Height - 1);
         };
-        bottom.Controls.Add(_close);
-        bottom.Controls.Add(_clear);
-        bottom.Controls.Add(_export);
-        _close.Click += (_, _) => Close();
-        _export.Click += (_, _) => ExportCurrentTab();
-        _clear.Click += (_, _) => ClearHistory();
+
+        // ----- Content: one grid per tab, only the selected one visible
+        var content = new Panel { Dock = DockStyle.Fill, BackColor = Theme.Surface, Padding = new Padding(0) };
 
         SetupGrid(_summaryGrid, "Period");
         SetupGrid(_dailyGrid, "Date");
@@ -79,44 +106,157 @@ public sealed class ReportsForm : Form
         SetupGrid(_monthlyGrid, "Month");
         SetupGrid(_yearlyGrid, "Year");
 
-        _tabs.TabPages.Add(MakeTabPage("Summary", _summaryGrid));
-        _tabs.TabPages.Add(MakeTabPage("Daily Report", _dailyGrid));
-        _tabs.TabPages.Add(MakeTabPage("Weekly Report", _weeklyGrid));
-        _tabs.TabPages.Add(MakeTabPage("Monthly Report", _monthlyGrid));
-        _tabs.TabPages.Add(MakeTabPage("Yearly Report", _yearlyGrid));
+        AddTab(tabBar, content, "Summary", _summaryGrid);
+        AddTab(tabBar, content, "Daily", _dailyGrid);
+        AddTab(tabBar, content, "Weekly", _weeklyGrid);
+        AddTab(tabBar, content, "Monthly", _monthlyGrid);
+        AddTab(tabBar, content, "Yearly", _yearlyGrid);
 
-        Controls.Add(_tabs);
-        Controls.Add(bottom);
-        Controls.Add(top);
+        // ----- Footer buttons
+        var footer = new Panel { Dock = DockStyle.Bottom, Height = 62, BackColor = Theme.SurfaceAlt };
+        footer.Paint += (_, e) =>
+        {
+            using var pen = new Pen(Theme.Border);
+            e.Graphics.DrawLine(pen, 0, 0, footer.Width, 0);
+        };
+
+        var left = new FlowLayoutPanel
+        {
+            Dock = DockStyle.Left,
+            Width = 480,
+            Padding = new Padding(14, 14, 0, 0),
+            BackColor = Theme.SurfaceAlt,
+            WrapContents = false
+        };
+        left.Controls.AddRange(new Control[] { _export, _deleteDays, _clear });
+
+        var right = new FlowLayoutPanel
+        {
+            Dock = DockStyle.Right,
+            Width = 130,
+            Padding = new Padding(0, 14, 14, 0),
+            BackColor = Theme.SurfaceAlt,
+            FlowDirection = FlowDirection.RightToLeft
+        };
+        right.Controls.Add(_close);
+
+        footer.Controls.Add(left);
+        footer.Controls.Add(right);
+
+        Theme.StyleButton(_export);
+        Theme.StyleButton(_deleteDays);
+        Theme.StyleButton(_clear, danger: false);
+        Theme.StyleButton(_close, primary: true);
+
+        _close.Click += (_, _) => Close();
+        _export.Click += (_, _) => ExportCurrentTab();
+        _deleteDays.Click += (_, _) => DeleteDays();
+        _clear.Click += (_, _) => ClearHistory();
+
+        Controls.Add(content);
+        Controls.Add(footer);
+        Controls.Add(tabBar);
+        Controls.Add(header);
 
         PopulateAdapterFilter();
         LoadAll();
+        SelectTab(_selectedTab);
     }
 
-    private static DataGridView MakeGrid() => new()
+    private static DataGridView MakeGrid()
     {
-        Dock = DockStyle.Fill,
-        ReadOnly = true,
-        AllowUserToAddRows = false,
-        AutoGenerateColumns = false,
-        AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill,
-        ColumnHeadersHeightSizeMode = DataGridViewColumnHeadersHeightSizeMode.AutoSize
-    };
+        var grid = new DataGridView
+        {
+            Dock = DockStyle.Fill,
+            ReadOnly = true,
+            AllowUserToAddRows = false,
+            AutoGenerateColumns = false,
+            AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill,
+            Visible = false
+        };
+        Theme.StyleGrid(grid);
+        return grid;
+    }
+
+    private void AddTab(FlowLayoutPanel bar, Panel content, string title, DataGridView grid)
+    {
+        int index = _tabs.Count;
+        var button = new Button
+        {
+            Text = title,
+            FlatStyle = FlatStyle.Flat,
+            UseVisualStyleBackColor = false,
+            BackColor = Theme.Surface,
+            Font = Theme.Ui(10f),
+            Cursor = Cursors.Hand,
+            AutoSize = false,
+            Size = new Size(96, 36),
+            Margin = new Padding(0, 0, 2, 0),
+            TabStop = false
+        };
+        button.FlatAppearance.BorderSize = 0;
+        button.FlatAppearance.MouseOverBackColor = Theme.SurfaceAlt;
+        button.FlatAppearance.MouseDownBackColor = Theme.SurfaceAlt;
+        button.Click += (_, _) => SelectTab(index);
+        button.Paint += (_, e) =>
+        {
+            if (_selectedTab != index) return;
+            using var brush = new SolidBrush(Theme.Accent);
+            e.Graphics.FillRectangle(brush, 12, button.Height - 3, button.Width - 24, 3);
+        };
+
+        _tabs.Add((title, grid, button));
+        bar.Controls.Add(button);
+        content.Controls.Add(grid);
+    }
+
+    private void SelectTab(int index)
+    {
+        _selectedTab = index;
+        for (int i = 0; i < _tabs.Count; i++)
+        {
+            var (_, grid, button) = _tabs[i];
+            bool selected = i == index;
+            grid.Visible = selected;
+            button.ForeColor = selected ? Theme.Accent : Theme.TextMuted;
+            button.Font = Theme.Ui(10f, selected ? FontStyle.Bold : FontStyle.Regular);
+            button.Invalidate();
+        }
+    }
 
     /// <summary>
-    /// Defines the shared column layout -- Period / DL / UL / DL & UL / Time
-    /// -- and wires up click-to-sort on every column header.
+    /// Defines the shared column layout -- Period / DL / UL / DL & UL / Time --
+    /// and wires up click-to-sort (with a sort arrow) on every column header.
     /// </summary>
     private void SetupGrid(DataGridView grid, string periodHeader)
     {
-        grid.Columns.Add(new DataGridViewTextBoxColumn { Name = "Period", HeaderText = periodHeader });
-        grid.Columns.Add(new DataGridViewTextBoxColumn { Name = "DL", HeaderText = "DL" });
-        grid.Columns.Add(new DataGridViewTextBoxColumn { Name = "UL", HeaderText = "UL" });
-        grid.Columns.Add(new DataGridViewTextBoxColumn { Name = "Both", HeaderText = "DL & UL" });
-        grid.Columns.Add(new DataGridViewTextBoxColumn { Name = "Time", HeaderText = "Time" });
+        AddColumn(grid, "Period", periodHeader, 30, false);
+        AddColumn(grid, "DL", "DL", 17, true);
+        AddColumn(grid, "UL", "UL", 17, true);
+        AddColumn(grid, "Both", "DL & UL", 18, true);
+        AddColumn(grid, "Time", "Time", 18, true);
 
         _gridStates[grid] = new GridState();
         grid.ColumnHeaderMouseClick += (_, e) => OnColumnHeaderClick(grid, e);
+    }
+
+    private static void AddColumn(DataGridView grid, string name, string header, float weight, bool numeric)
+    {
+        var col = new DataGridViewTextBoxColumn
+        {
+            Name = name,
+            HeaderText = header,
+            FillWeight = weight,
+            SortMode = DataGridViewColumnSortMode.Programmatic
+        };
+
+        if (numeric)
+        {
+            col.DefaultCellStyle.Alignment = DataGridViewContentAlignment.MiddleRight;
+            col.HeaderCell.Style.Alignment = DataGridViewContentAlignment.MiddleRight;
+        }
+
+        grid.Columns.Add(col);
     }
 
     private void OnColumnHeaderClick(DataGridView grid, DataGridViewCellMouseEventArgs e)
@@ -157,15 +297,22 @@ public sealed class ReportsForm : Form
                 FormatBytes(r.BytesDown + r.BytesUp),
                 FormatDuration(r.SecondsOnline));
         }
+
+        foreach (DataGridViewColumn c in grid.Columns)
+            c.HeaderCell.SortGlyphDirection = SortOrder.None;
+
+        var sortedColumn = grid.Columns[state.SortColumn];
+        if (sortedColumn is not null)
+            sortedColumn.HeaderCell.SortGlyphDirection = state.Ascending ? SortOrder.Ascending : SortOrder.Descending;
     }
 
-    private static TabPage MakeTabPage(string title, Control grid)
-    {
-        var page = new TabPage(title);
-        grid.Dock = DockStyle.Fill;
-        page.Controls.Add(grid);
-        return page;
-    }
+    /// <summary>
+    /// Online time for a set of rows. Each adapter keeps its own seconds, so
+    /// adding them up would count the same hour twice whenever two adapters
+    /// are connected; instead take the longest per day, then add up the days.
+    /// </summary>
+    private static long OnlineSeconds(IEnumerable<DailyStat> stats)
+        => stats.GroupBy(s => s.Date).Sum(day => day.Max(s => s.SecondsOnline));
 
     private void PopulateAdapterFilter()
     {
@@ -227,7 +374,7 @@ public sealed class ReportsForm : Form
             sortKey,
             stats.Sum(s => s.BytesReceived),
             stats.Sum(s => s.BytesSent),
-            stats.Sum(s => s.SecondsOnline));
+            OnlineSeconds(stats));
     }
 
     private void LoadDaily()
@@ -241,7 +388,7 @@ public sealed class ReportsForm : Form
                 g.Key.ToDateTime(TimeOnly.MinValue),
                 g.Sum(x => x.BytesReceived),
                 g.Sum(x => x.BytesSent),
-                g.Sum(x => x.SecondsOnline)))
+                OnlineSeconds(g)))
             .ToList();
 
         var state = _gridStates[_dailyGrid];
@@ -260,7 +407,7 @@ public sealed class ReportsForm : Form
                 g.Key.ToDateTime(TimeOnly.MinValue),
                 g.Sum(x => x.BytesReceived),
                 g.Sum(x => x.BytesSent),
-                g.Sum(x => x.SecondsOnline)))
+                OnlineSeconds(g)))
             .ToList();
 
         var state = _gridStates[_weeklyGrid];
@@ -279,7 +426,7 @@ public sealed class ReportsForm : Form
                 g.Key.ToDateTime(TimeOnly.MinValue),
                 g.Sum(x => x.BytesReceived),
                 g.Sum(x => x.BytesSent),
-                g.Sum(x => x.SecondsOnline)))
+                OnlineSeconds(g)))
             .ToList();
 
         var state = _gridStates[_monthlyGrid];
@@ -298,7 +445,7 @@ public sealed class ReportsForm : Form
                 new DateTime(g.Key, 1, 1),
                 g.Sum(x => x.BytesReceived),
                 g.Sum(x => x.BytesSent),
-                g.Sum(x => x.SecondsOnline)))
+                OnlineSeconds(g)))
             .ToList();
 
         var state = _gridStates[_yearlyGrid];
@@ -306,14 +453,14 @@ public sealed class ReportsForm : Form
         RenderGrid(_yearlyGrid, state);
     }
 
-    private DataGridView CurrentGrid() => _tabs.SelectedTab?.Controls[0] as DataGridView ?? _summaryGrid;
+    private DataGridView CurrentGrid() => _tabs[_selectedTab].Grid;
 
     private void ExportCurrentTab()
     {
         using var dlg = new SaveFileDialog
         {
             Filter = "CSV file (*.csv)|*.csv",
-            FileName = $"{_tabs.SelectedTab?.Text.Replace(" ", "")}_{DateTime.Now:yyyyMMdd_HHmmss}.csv"
+            FileName = $"{_tabs[_selectedTab].Title}Report_{DateTime.Now:yyyyMMdd_HHmmss}.csv"
         };
         if (dlg.ShowDialog(this) != DialogResult.OK) return;
 
@@ -344,6 +491,28 @@ public sealed class ReportsForm : Form
         if (value.Contains(',') || value.Contains('"') || value.Contains('\n'))
             return "\"" + value.Replace("\"", "\"\"") + "\"";
         return value;
+    }
+
+    private void DeleteDays()
+    {
+        using var dlg = new DeleteRangeForm();
+        if (dlg.ShowDialog(this) != DialogResult.OK) return;
+
+        var from = dlg.From;
+        var to = dlg.To;
+        if (to < from) (from, to) = (to, from);
+
+        var confirm = MessageBox.Show(
+            this,
+            $"Delete all recorded usage from {from:yyyy-MM-dd} to {to:yyyy-MM-dd}?\n\nThis cannot be undone.",
+            "Delete days",
+            MessageBoxButtons.YesNo,
+            MessageBoxIcon.Warning);
+        if (confirm != DialogResult.Yes) return;
+
+        _storage.DeleteDailyStatsBetween(from, to);
+        PopulateAdapterFilter();
+        LoadAll();
     }
 
     private void ClearHistory()
