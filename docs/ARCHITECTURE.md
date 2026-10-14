@@ -13,9 +13,11 @@ ByteTide.Tests    (net8.0)           xUnit -> Core
 
 | Type | Role |
 |---|---|
-| `NetworkSampler` | Every second reads Windows interface counters and raises `SamplesReady` with a `LiveSample` per adapter (bytes, rates, link speed). |
+| `NetworkSampler` | Every second reads Windows interface counters for the adapters that count (see `AdapterFilter`) and raises `SamplesReady` with a `LiveSample` per adapter (bytes, byte deltas, rates, link speed, elapsed time). |
 | `Storage` | SQLite wrapper (Microsoft.Data.Sqlite): daily stats, live samples, settings. |
-| `DailyRollupTracker` | Accumulates samples into per-day, per-adapter totals and flushes them to `daily_stats` roughly once a minute. |
+| `DailyRollupTracker` | Adds up each sample's reset-safe byte deltas and elapsed time per day and adapter, and *adds* them to `daily_stats` roughly once a minute (`Storage.AddToDailyStat`), so restarts and reconnects lose nothing. |
+| `CounterMath` | Reset-safe difference between two cumulative byte-counter readings. |
+| `AdapterFilter` | Recognises virtual / VPN / tunnel adapters so they aren't double-counted. |
 | `LegacyImporter` | Parses RAS Graph & Stats `.dat` files into the same schema. |
 | `RatesRecorder` | Periodic rate logging to text/CSV. |
 | `NotificationEngine` / `NotificationSettings` | Threshold alerts and their configuration. |

@@ -16,7 +16,8 @@ Closing the window **hides it to the tray**: monitoring continues. Double-click 
 Controls what the graph draws. Each option is a toggle and is remembered.
 
 - Window title / IP address overlay
-- **Graph (Area)** or **Column Graph** style
+- **Graph (Area)**, **Column Graph** or **Line Graph** style
+- **Graph width (pixels per second)**: 1 to 6. Smaller values show more history; larger values zoom in
 - Scale labels and scale gridlines
 - Time labels and time gridlines
 - Average download/upload reference lines
@@ -33,6 +34,8 @@ Controls what the graph draws. Each option is a toggle and is remembered.
 ### Adapters
 Choose **All Connections** (combined) or a single adapter such as Ethernet, Wi-Fi or a VPN. With "All Connections" the status bar shows the busiest adapter's link speed.
 
+**Count in All Connections** lists every active adapter with a check mark. Only checked adapters are recorded. Virtual, VPN and tunnel adapters (Hyper-V, VMware, WireGuard and similar) start unchecked because their traffic is already counted on the physical adapter beneath them, so counting both would double the totals. If you use a PPPoE connection and see inflated numbers, uncheck either the PPPoE adapter or the physical adapter it runs over.
+
 ### Tools
 - **Rates Recorder** — logs download/upload rates for one adapter (or all combined) to a text or CSV file at an interval you choose. Handy for spotting patterns or feeding a spreadsheet.
 - **Traffic Stopwatch** — start it, do your transfer, stop it. You get total data moved plus max, min and average rate for that window. Good for quick speed tests.
@@ -43,11 +46,13 @@ Tabs for **Summary**, **Daily**, **Weekly**, **Monthly** and **Yearly**.
 
 - Columns: DL, UL, DL & UL, Time.
 - Click a column header to sort; click again to reverse. The default is newest first.
-- **Time** is cumulative time online for the period and can exceed 24 hours (for example `2270:59:17` for a year).
-- Filter by adapter, export to **CSV**, or clear history.
+- **Time** is cumulative time online for the period and can exceed 24 hours for a week, month or year (for example `2270:59:17`). For a single day it is the longest connected time among your adapters, so it never exceeds 24 hours.
+- Filter by adapter and export to **CSV**.
+- **Delete days...** removes the recorded usage for a date range (all adapters). Use it to remove days that were measured wrongly.
+- **Clear all...** deletes everything for the chosen adapter (or all adapters).
 
 ### About
-Shows version and credits.
+Shows the version, author and a link to the project page.
 
 ## Email alerts
 
@@ -72,3 +77,10 @@ Hover over the icon to see a tooltip with the current download (▼) and upload 
 ## Where data is kept
 
 `%AppData%\ByteTide\data.db`, a SQLite database. Live samples are pruned after 48 hours; daily totals are kept indefinitely. To back up your history, copy the file while the app is closed.
+
+## Correcting history you imported or measured imperfectly
+
+1. **Reports > Delete days...** and choose the days that look wrong.
+2. **File > Import Legacy Data...**, choose your RAS Graph & Stats folder, tick **Replace days that already have data**, and import. Every day found in those files is wiped first and replaced by the imported numbers.
+
+From version 1.0.2 onward, restarting the app or reconnecting an adapter no longer affects the day's totals.

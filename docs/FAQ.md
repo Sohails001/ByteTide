@@ -12,8 +12,11 @@ No. Everything stays in a local SQLite file. The only outbound traffic is email 
 **Why is memory use around 20 MB?**
 It's a managed .NET app (GC + JIT). That's normal for WinForms.
 
-**My totals look too low after a restart.**
-Known limitation: the day's counter baseline resets when the app or service restarts mid-day. See the README.
+**My totals look too low or too high compared with another monitor.**
+Make sure you are on version 1.0.2 or later. Earlier builds replaced the day's total on every restart and lost bytes when an adapter reconnected. Then check **Adapters > Count in All Connections**: if two adapters carry the same traffic (for example a PPPoE connection over Ethernet, or a VPN), count only one of them. Small differences of a percent or two between programs are normal because each reads the network counters at slightly different moments.
+
+**A day shows more than 24 hours online.**
+That came from adding up every adapter's time. Version 1.0.2 shows the longest connected time among adapters for each day instead.
 
 **The window disappeared / is off-screen.**
 Tray icon → Open, then **Window → Reset Window Position**.
