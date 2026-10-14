@@ -3,6 +3,23 @@
 All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses [Semantic Versioning](https://semver.org/).
 
+## [1.0.2]
+
+### Fixed (accuracy)
+- **Restarting the app no longer erases the day.** Previously each flush *replaced* the stored day with only what had been counted since launch, so every restart threw away the earlier part of that day. Flushes now *add* to the stored day.
+- **Adapter reconnects no longer lose bytes.** Totals are now built by adding up per-second, reset-safe deltas instead of subtracting raw counters, which broke whenever Wi-Fi or PPPoE reconnected and the counter dropped back to zero.
+- **Online time is no longer inflated.** Time is now real elapsed time per sample (sleep gaps are not counted), and reports use the longest connected time among adapters per day instead of adding every adapter together (which produced days longer than 24 hours).
+- **Virtual, VPN and tunnel adapters are ignored by default** so their traffic isn't counted twice alongside the physical adapter. Choose exactly which adapters count under **Adapters > Count in All Connections**.
+- The status bar session totals use the same reset-safe deltas.
+
+### Added
+- **Crisp graph.** Redrawn at exactly whole pixels per second with no smoothing, so lines and edges are razor sharp. Gridlines sit on round clock times and scroll with the data; the history grows with the window (up to two hours). New **Line Graph** style and **Graph width (pixels per second)** option.
+- **Modern look:** dark title bar and menus on the main window, a redesigned Reports window with flat tabs, alternating rows, right-aligned numbers and sort arrows, plus a consistent flat style on every dialog.
+- **New About window** with a large ByteTide title, version, author and a link to the project.
+- **Reports > Delete days...** to remove a date range of wrongly measured history.
+- **Import > "Replace days that already have data"** so imported numbers can fully replace days that were measured imperfectly.
+- Unit tests for the counting logic (counter resets, restarts, sleep gaps).
+
 ## [1.0.1]
 
 ### Fixed
