@@ -29,6 +29,18 @@ public sealed class LiveSample
     /// alongside the byte counters so callers don't need a separate, relatively
     /// expensive NetworkInterface.GetAllNetworkInterfaces() call just for this.</summary>
     public long SpeedBps { get; init; }
+
+    /// <summary>Adapter description + MAC, so rollups never need to re-enumerate adapters.</summary>
+    public string AdapterName { get; init; } = "";
+    public string MacAddress { get; init; } = "";
+
+    /// <summary>Bytes transferred since the previous sample, reset-safe (see CounterMath).
+    /// Accumulate these for totals -- never subtract raw counters.</summary>
+    public long DeltaBytesReceived { get; init; }
+    public long DeltaBytesSent { get; init; }
+
+    /// <summary>Seconds since the previous sample (about 1; larger after sleep or a stall).</summary>
+    public double ElapsedSeconds { get; init; }
 }
 
 /// <summary>

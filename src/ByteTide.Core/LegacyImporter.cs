@@ -107,27 +107,40 @@ public static class LegacyImporter
     /// <summary>
     /// Imports every .dat file in a folder (non-recursive) into storage.
     /// Safe to re-run: rows are upserted by (date, adapter, mac).
+    ///
+    /// With replaceExistingDays, every date found in the files is first wiped
+    /// for ALL adapters, so the imported numbers fully replace whatever was
+    /// recorded for those days (useful for correcting days that ByteTide
+    /// measured imperfectly while the original program was also running).
     /// </summary>
-    public static ImportSummary ImportFolder(string folder, Storage storage)
+    public static ImportSummary ImportFolder(string folder, Storage storage, bool replaceExistingDays = false)
     {
         int filesProcessed = 0, recordsImported = 0, filesFailed = 0;
+        var parsed = new List<DailyStat>();
 
         foreach (var file in Directory.EnumerateFiles(folder, "*.dat"))
         {
             try
             {
-                var stats = ParseFile(file);
-                foreach (var s in stats)
-                {
-                    storage.UpsertDailyStat(s);
-                    recordsImported++;
-                }
+                parsed.AddRange(ParseFile(file));
                 filesProcessed++;
             }
             catch
             {
                 filesFailed++;
             }
+        }
+
+        if (replaceExistingDays)
+        {
+            foreach (var date in parsed.Select(s => s.Date).Distinct())
+                storage.DeleteDailyStatsBetween(date, date);
+        }
+
+        foreach (var s in parsed)
+        {
+            storage.UpsertDailyStat(s);
+            recordsImported++;
         }
 
         return new ImportSummary(filesProcessed, recordsImported, filesFailed);

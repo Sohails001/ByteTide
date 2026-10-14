@@ -110,6 +110,47 @@ public sealed class Storage : IDisposable
         }
     }
 
+    /// <summary>
+    /// ADDS the given amounts to the stored day instead of replacing it. Live
+    /// rollups use this so restarting the app mid-day never erases what was
+    /// already recorded. (UpsertDailyStat, which replaces, is for imports.)
+    /// </summary>
+    public void AddToDailyStat(DailyStat s)
+    {
+        lock (_lock)
+        {
+            using var cmd = _conn.CreateCommand();
+            cmd.CommandText = """
+                INSERT INTO daily_stats (date, adapter_name, mac, seconds_online, bytes_received, bytes_sent)
+                VALUES ($date, $name, $mac, $sec, $rx, $tx)
+                ON CONFLICT(date, adapter_name, mac) DO UPDATE SET
+                    seconds_online = seconds_online + excluded.seconds_online,
+                    bytes_received = bytes_received + excluded.bytes_received,
+                    bytes_sent = bytes_sent + excluded.bytes_sent
+                """;
+            cmd.Parameters.AddWithValue("$date", s.Date.ToString("yyyy-MM-dd"));
+            cmd.Parameters.AddWithValue("$name", s.AdapterName);
+            cmd.Parameters.AddWithValue("$mac", s.MacAddress);
+            cmd.Parameters.AddWithValue("$sec", s.SecondsOnline);
+            cmd.Parameters.AddWithValue("$rx", s.BytesReceived);
+            cmd.Parameters.AddWithValue("$tx", s.BytesSent);
+            cmd.ExecuteNonQuery();
+        }
+    }
+
+    /// <summary>Deletes every adapter's rows for the inclusive date range (used to repair or replace days).</summary>
+    public int DeleteDailyStatsBetween(DateOnly from, DateOnly to)
+    {
+        lock (_lock)
+        {
+            using var cmd = _conn.CreateCommand();
+            cmd.CommandText = "DELETE FROM daily_stats WHERE date BETWEEN $from AND $to";
+            cmd.Parameters.AddWithValue("$from", from.ToString("yyyy-MM-dd"));
+            cmd.Parameters.AddWithValue("$to", to.ToString("yyyy-MM-dd"));
+            return cmd.ExecuteNonQuery();
+        }
+    }
+
     public void InsertLiveSample(LiveSample s)
     {
         lock (_lock)

@@ -1,71 +1,122 @@
-using System.Net.NetworkInformation;
-
 namespace ByteTide.Core;
 
 /// <summary>
-/// Accumulates per-adapter online-seconds and per-day byte deltas from a
-/// stream of LiveSamples, and flushes them into Storage's daily_stats table.
-/// Mirrors the rollup logic the GUI app's tray host uses, factored out here
-/// so the headless Windows Service (which has no tray host) can share it.
+/// Accumulates per-adapter, per-day usage from a stream of LiveSamples and
+/// flushes it into Storage's daily_stats table.
+///
+/// Design notes (these fix the "totals reset when the app restarts" and
+/// "bytes vanish after a reconnect" problems of the original rollup):
+///  * It sums each sample's reset-safe DELTAS instead of subtracting raw
+///    counters, so adapter reconnects don't lose data.
+///  * Every flush ADDS the pending amounts to the stored day (see
+///    Storage.AddToDailyStat) instead of overwriting it, so restarting the app
+///    mid-day keeps what was already recorded.
+///  * Online time is the real elapsed time of each sample, not "1 per tick".
+/// Shared by the GUI tray host and the headless Windows Service.
 /// </summary>
 public sealed class DailyRollupTracker
 {
-    private sealed class Accumulator
+    private sealed class Pending
     {
         public DateOnly Date;
-        public long StartBytesReceived;
-        public long StartBytesSent;
-        public long LastBytesReceived;
-        public long LastBytesSent;
-        public long SecondsOnline;
+        public string AdapterName = "";
+        public string MacAddress = "";
+        public double Seconds;
+        public long Received;
+        public long Sent;
     }
 
-    private readonly Dictionary<string, Accumulator> _state = new();
+    // A single sample never contributes more than this much online time, so a
+    // sleep/hibernate gap isn't counted as time spent online.
+    private const double MaxSecondsPerSample = 2.0;
+
+    private readonly object _lock = new();
+    private readonly Dictionary<string, Pending> _pending = new();
+    private readonly List<Pending> _finished = new(); // earlier days / failed writes waiting to be saved
 
     public void RecordSamples(IEnumerable<LiveSample> samples)
     {
-        var today = DateOnly.FromDateTime(DateTime.Today);
-
-        foreach (var s in samples)
+        lock (_lock)
         {
-            if (!_state.TryGetValue(s.AdapterId, out var acc) || acc.Date != today)
+            foreach (var s in samples)
             {
-                acc = new Accumulator
-                {
-                    Date = today,
-                    StartBytesReceived = s.BytesReceived,
-                    StartBytesSent = s.BytesSent
-                };
-                _state[s.AdapterId] = acc;
-            }
+                var date = DateOnly.FromDateTime(s.Timestamp);
 
-            acc.SecondsOnline += 1;
-            acc.LastBytesReceived = s.BytesReceived;
-            acc.LastBytesSent = s.BytesSent;
+                if (!_pending.TryGetValue(s.AdapterId, out var p))
+                {
+                    p = new Pending { Date = date };
+                    _pending[s.AdapterId] = p;
+                }
+                else if (p.Date != date)
+                {
+                    // Midnight passed: keep yesterday's amounts for yesterday
+                    // (but don't bother saving an empty record).
+                    if (p.Seconds >= 0.5 || p.Received > 0 || p.Sent > 0) _finished.Add(p);
+                    p = new Pending { Date = date };
+                    _pending[s.AdapterId] = p;
+                }
+
+                p.AdapterName = s.AdapterName;
+                p.MacAddress = s.MacAddress;
+                p.Seconds += Math.Min(Math.Max(s.ElapsedSeconds, 0), MaxSecondsPerSample);
+                p.Received += s.DeltaBytesReceived;
+                p.Sent += s.DeltaBytesSent;
+            }
         }
     }
 
+    /// <summary>Writes everything accumulated so far into storage (additively).</summary>
     public void Flush(Storage storage)
     {
-        var today = DateOnly.FromDateTime(DateTime.Today);
+        var toWrite = new List<Pending>();
 
-        foreach (var nic in NetworkInterface.GetAllNetworkInterfaces())
+        lock (_lock)
         {
-            if (!_state.TryGetValue(nic.Id, out var acc) || acc.Date != today) continue;
+            toWrite.AddRange(_finished);
+            _finished.Clear();
 
-            var info = NetworkSampler.GetAdapterInfo(nic);
-            long rx = Math.Max(0, acc.LastBytesReceived - acc.StartBytesReceived);
-            long tx = Math.Max(0, acc.LastBytesSent - acc.StartBytesSent);
-
-            storage.UpsertDailyStat(new DailyStat
+            foreach (var p in _pending.Values)
             {
-                Date = today,
-                AdapterName = info.Name,
-                MacAddress = info.MacAddress,
-                SecondsOnline = acc.SecondsOnline,
-                BytesReceived = rx,
-                BytesSent = tx
-            });
+                long wholeSeconds = (long)p.Seconds;
+                if (wholeSeconds == 0 && p.Received == 0 && p.Sent == 0) continue;
+
+                toWrite.Add(new Pending
+                {
+                    Date = p.Date,
+                    AdapterName = p.AdapterName,
+                    MacAddress = p.MacAddress,
+                    Seconds = wholeSeconds,
+                    Received = p.Received,
+                    Sent = p.Sent
+                });
+
+                p.Seconds -= wholeSeconds; // keep the fractional remainder for next time
+                p.Received = 0;
+                p.Sent = 0;
+            }
+        }
+
+        foreach (var item in toWrite)
+        {
+            if (string.IsNullOrEmpty(item.AdapterName)) continue;
+
+            try
+            {
+                storage.AddToDailyStat(new DailyStat
+                {
+                    Date = item.Date,
+                    AdapterName = item.AdapterName,
+                    MacAddress = item.MacAddress,
+                    SecondsOnline = (long)Math.Round(item.Seconds),
+                    BytesReceived = item.Received,
+                    BytesSent = item.Sent
+                });
+            }
+            catch
+            {
+                // Don't lose the data if the database was briefly unavailable; retry next flush.
+                lock (_lock) _finished.Add(item);
+            }
         }
     }
 }

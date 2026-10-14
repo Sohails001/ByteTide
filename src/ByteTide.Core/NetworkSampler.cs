@@ -18,7 +18,61 @@ public sealed class NetworkSampler : IDisposable
     private readonly Dictionary<string, (long Rx, long Tx, DateTime Ts)> _last = new();
     private readonly object _lastLock = new();
 
+    private readonly object _filterLock = new();
+    private HashSet<string> _excludedIds = new();
+    private HashSet<string> _forcedIncludedIds = new();
+    private bool _includeVirtual;
+
     public event Action<IReadOnlyList<LiveSample>>? SamplesReady;
+
+    /// <summary>
+    /// When false (the default), virtual, VPN and tunnel adapters are ignored
+    /// so their traffic isn't counted twice alongside the physical adapter.
+    /// </summary>
+    public bool IncludeVirtualAdapters
+    {
+        get { lock (_filterLock) return _includeVirtual; }
+        set { lock (_filterLock) _includeVirtual = value; }
+    }
+
+    /// <summary>Adapter ids (NetworkInterface.Id) the user has chosen not to count.</summary>
+    public IReadOnlyCollection<string> ExcludedAdapterIds
+    {
+        get { lock (_filterLock) return _excludedIds.ToList(); }
+    }
+
+    public void SetExcludedAdapterIds(IEnumerable<string> ids)
+    {
+        lock (_filterLock) _excludedIds = new HashSet<string>(ids);
+    }
+
+    /// <summary>
+    /// Adapter ids the user explicitly wants counted even though they look
+    /// virtual (overrides the automatic virtual/VPN exclusion).
+    /// </summary>
+    public IReadOnlyCollection<string> ForcedIncludedAdapterIds
+    {
+        get { lock (_filterLock) return _forcedIncludedIds.ToList(); }
+    }
+
+    public void SetForcedIncludedAdapterIds(IEnumerable<string> ids)
+    {
+        lock (_filterLock) _forcedIncludedIds = new HashSet<string>(ids);
+    }
+
+    /// <summary>Whether this adapter currently counts towards totals.</summary>
+    public bool IsTracked(NetworkInterface nic)
+    {
+        if (nic.NetworkInterfaceType == NetworkInterfaceType.Loopback) return false;
+
+        lock (_filterLock)
+        {
+            if (_excludedIds.Contains(nic.Id)) return false;
+            if (_forcedIncludedIds.Contains(nic.Id)) return true;
+            if (!_includeVirtual && AdapterFilter.LooksVirtual(nic)) return false;
+        }
+        return true;
+    }
 
     public NetworkSampler(TimeSpan interval)
     {
@@ -35,7 +89,7 @@ public sealed class NetworkSampler : IDisposable
             foreach (var nic in NetworkInterface.GetAllNetworkInterfaces())
             {
                 if (nic.OperationalStatus != OperationalStatus.Up) continue;
-                if (nic.NetworkInterfaceType == NetworkInterfaceType.Loopback) continue;
+                if (!IsTracked(nic)) continue;
 
                 IPInterfaceStatistics stats;
                 try
@@ -56,13 +110,13 @@ public sealed class NetworkSampler : IDisposable
                     double elapsed = (now - prev.Ts).TotalSeconds;
                     if (elapsed > 0)
                     {
-                        long drx = rx - prev.Rx;
-                        long dtx = tx - prev.Tx;
+                        // Counters jump backwards when an adapter resets or reconnects;
+                        // CounterMath treats that as "restarted from zero" so no bytes
+                        // are lost and no negative rate is reported.
+                        long drx = CounterMath.Delta(prev.Rx, rx);
+                        long dtx = CounterMath.Delta(prev.Tx, tx);
 
-                        // Counters can jump backwards on adapter reset/reconnect; treat as no traffic
-                        // rather than reporting a bogus negative rate.
-                        double downBps = drx >= 0 ? drx / elapsed : 0;
-                        double upBps = dtx >= 0 ? dtx / elapsed : 0;
+                        var info = GetAdapterInfo(nic);
 
                         samples.Add(new LiveSample
                         {
@@ -70,9 +124,14 @@ public sealed class NetworkSampler : IDisposable
                             AdapterId = nic.Id,
                             BytesReceived = rx,
                             BytesSent = tx,
-                            DownloadBps = downBps,
-                            UploadBps = upBps,
-                            SpeedBps = nic.Speed
+                            DownloadBps = drx / elapsed,
+                            UploadBps = dtx / elapsed,
+                            SpeedBps = nic.Speed,
+                            AdapterName = info.Name,
+                            MacAddress = info.MacAddress,
+                            DeltaBytesReceived = drx,
+                            DeltaBytesSent = dtx,
+                            ElapsedSeconds = elapsed
                         });
                     }
                 }
