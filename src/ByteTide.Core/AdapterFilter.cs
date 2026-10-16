@@ -12,7 +12,9 @@ public static class AdapterFilter
     private static readonly string[] VirtualNameMarkers =
     {
         "Hyper-V", "vEthernet", "Virtual", "VMware", "VirtualBox", "Npcap", "TAP-", "Wintun",
-        "WireGuard", "NordLynx", "OpenVPN", "Pseudo-Interface", "Loopback",
+        "WireGuard", "NordLynx", "OpenVPN", "ovpn-dco", "Pseudo-Interface", "Loopback",
+        "Tailscale", "Cloudflare", "WARP", "Proton", "Surfshark", "Mullvad", "Windscribe", "Hamachi",
+        "Radmin", "ZeroTier", "AnyConnect", "GlobalProtect", "Fortinet", "SonicWall", "Check Point",
         "Miniport (IKEv2)", "Miniport (L2TP)", "Miniport (PPTP)", "Miniport (SSTP)"
     };
 
