@@ -13,19 +13,17 @@ Closing the window **hides it to the tray**: monitoring continues. Double-click 
 - **Exit** — quit the application.
 
 ### View
-Controls what the graph draws. Each option is a toggle and is remembered.
+Controls what the graph draws. The options are grouped into submenus, and the check-box groups stay open while you click so you can change several at once.
 
-- Window title / IP address overlay
-- **Graph (Area)**, **Column Graph** or **Line Graph** style
+- **Graph style**: Area, Column or Line
 - **Graph width (pixels per second)**: 1 to 6. Smaller values show more history; larger values zoom in
-- Scale labels and scale gridlines
-- Time labels and time gridlines
-- Average download/upload reference lines
-- Max rate and average speeds text
-- Master **Text** toggle
-- **KB/s ↔ kbps** unit switch
+- **Grid and labels**: scale labels, scale gridlines, time labels, time gridlines
+- **Average lines**: average download and upload reference lines
+- **Text overlay**: master Show text switch, adapter name, IP address, max rate, average speeds
+- **Speed units**: bytes per second (KB/s, MB/s) or bits per second (kbps, Mbps)
 
 ### Window
+- **Appearance** — **Match Windows** (follows Windows' light/dark setting), **Dark** or **Light**. Changes the title bar, menus, status bar and graph.
 - **Always on Top**
 - **Semi-transparent** — about 85% opacity
 - **Click-through** — the window ignores mouse clicks so it can sit over other apps like a HUD. **Undo it from the tray icon:** double-click the tray icon, or right-click it → **Window → Click-through**. Click-through is never remembered, so ByteTide always starts with it off.
