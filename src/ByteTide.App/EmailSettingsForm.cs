@@ -17,35 +17,29 @@ public sealed class EmailSettingsForm : Form
     {
         Result = current;
 
-        Text = "Email Settings";
-        Width = 380;
-        Height = 300;
-        StartPosition = FormStartPosition.CenterParent;
-        FormBorderStyle = FormBorderStyle.FixedDialog;
-        MaximizeBox = false;
-        MinimizeBox = false;
+        FormKit.Setup(this, "Email Settings", 470, 440);
 
-        var layout = new TableLayoutPanel { Dock = DockStyle.Top, ColumnCount = 2, AutoSize = true, Padding = new Padding(12) };
-        layout.Controls.Add(new Label { Text = "SMTP Host:", AutoSize = true, Padding = new Padding(0, 6, 0, 0) });
-        layout.Controls.Add(_host);
-        layout.Controls.Add(new Label { Text = "Port:", AutoSize = true, Padding = new Padding(0, 6, 0, 0) });
-        layout.Controls.Add(_port);
-        layout.Controls.Add(new Label { Text = "", AutoSize = true });
-        layout.Controls.Add(_useSsl);
-        layout.Controls.Add(new Label { Text = "Username:", AutoSize = true, Padding = new Padding(0, 6, 0, 0) });
-        layout.Controls.Add(_username);
-        layout.Controls.Add(new Label { Text = "Password:", AutoSize = true, Padding = new Padding(0, 6, 0, 0) });
-        layout.Controls.Add(_password);
-        layout.Controls.Add(new Label { Text = "From address:", AutoSize = true, Padding = new Padding(0, 6, 0, 0) });
-        layout.Controls.Add(_fromAddress);
+        Controls.Add(FormKit.Heading("Email Settings", 24, 18));
+        Controls.Add(FormKit.Muted("Your mail server's details, used to send usage alerts. Use an app-specific password.", 24, 54, 422, 40));
 
-        var buttons = new FlowLayoutPanel { Dock = DockStyle.Top, Padding = new Padding(12), FlowDirection = FlowDirection.RightToLeft };
+        AddRow("SMTP server", _host, 106);
+        AddRow("Port", _port, 148, 90);
+        _useSsl.Location = new Point(170, 188);
+        _useSsl.AutoSize = true;
+        Controls.Add(_useSsl);
+        AddRow("User name", _username, 226);
+        AddRow("Password", _password, 268);
+        AddRow("From address", _fromAddress, 310);
+
+        FormKit.StyleInputs(_host, _username, _password, _fromAddress);
+
         var ok = new Button { Text = "OK", DialogResult = DialogResult.OK };
         var cancel = new Button { Text = "Cancel", DialogResult = DialogResult.Cancel };
-        buttons.Controls.Add(cancel);
-        buttons.Controls.Add(ok);
+        Theme.StyleButton(ok, primary: true);
+        Theme.StyleButton(cancel);
         AcceptButton = ok;
         CancelButton = cancel;
+        FormKit.AddFooter(this, null, cancel, ok);
 
         ok.Click += (_, _) =>
         {
@@ -60,14 +54,18 @@ public sealed class EmailSettingsForm : Form
             };
         };
 
-        Controls.Add(buttons);
-        Controls.Add(layout);
-
         _host.Text = current.SmtpHost;
         _port.Value = Math.Clamp(current.SmtpPort, 1, 65535);
         _useSsl.Checked = current.UseSsl;
         _username.Text = current.Username;
         _password.Text = current.Password;
         _fromAddress.Text = current.FromAddress;
+    }
+
+    private void AddRow(string caption, Control input, int y, int width = 276)
+    {
+        Controls.Add(FormKit.Caption(caption, 24, y + 4));
+        FormKit.Place(input, 170, y, width);
+        Controls.Add(input);
     }
 }

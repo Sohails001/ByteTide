@@ -296,6 +296,11 @@ public sealed class TrayContext : ApplicationContext
     {
         MenuHelper.Clear(menu.Items);
 
+        var palette = Theme.Menu;
+        menu.Renderer = Theme.CreateMenuRenderer();
+        menu.BackColor = palette.Dropdown;
+        menu.ForeColor = palette.Text;
+
         var open = new ToolStripMenuItem("Open ByteTide", null, (_, _) => ShowMain());
         open.Font = new Font(open.Font, FontStyle.Bold);
         menu.Items.Add(open);

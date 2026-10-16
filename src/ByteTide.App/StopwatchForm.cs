@@ -12,19 +12,20 @@ public sealed class StopwatchForm : Form
 {
     private readonly NetworkSampler _sampler;
 
-    private readonly ComboBox _adapter = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 300 };
-    private readonly CheckBox _alwaysOnTop = new() { Text = "Always on top", Checked = true };
+    private readonly ComboBox _adapter = new() { DropDownStyle = ComboBoxStyle.DropDownList };
+    private readonly CheckBox _alwaysOnTop = new() { Text = "Always on top", Checked = true, AutoSize = true };
     private readonly Button _toggle = new() { Text = "Start" };
-    private readonly Label _elapsed = new() { Text = "00:00:00", Font = new Font("Consolas", 14f, FontStyle.Bold), AutoSize = true };
+    private readonly Button _close = new() { Text = "Close", DialogResult = DialogResult.Cancel };
+    private readonly Label _elapsed = new() { Text = "00:00:00", Font = new Font("Consolas", 26f, FontStyle.Bold), ForeColor = Theme.TextPrimary, AutoSize = true };
 
-    private readonly Label _totalDown = new() { Text = "--" };
-    private readonly Label _totalUp = new() { Text = "--" };
-    private readonly Label _maxDown = new() { Text = "--" };
-    private readonly Label _maxUp = new() { Text = "--" };
-    private readonly Label _minDown = new() { Text = "--" };
-    private readonly Label _minUp = new() { Text = "--" };
-    private readonly Label _avgDown = new() { Text = "--" };
-    private readonly Label _avgUp = new() { Text = "--" };
+    private readonly Label _totalDown = ValueLabel();
+    private readonly Label _totalUp = ValueLabel();
+    private readonly Label _maxDown = ValueLabel();
+    private readonly Label _maxUp = ValueLabel();
+    private readonly Label _minDown = ValueLabel();
+    private readonly Label _minUp = ValueLabel();
+    private readonly Label _avgDown = ValueLabel();
+    private readonly Label _avgUp = ValueLabel();
 
     private readonly List<string> _adapterIds = new();
 
@@ -41,47 +42,45 @@ public sealed class StopwatchForm : Form
     {
         _sampler = sampler;
 
-        Text = "Traffic Stopwatch";
-        Width = 420;
-        Height = 300;
-        StartPosition = FormStartPosition.CenterParent;
+        FormKit.Setup(this, "Traffic Stopwatch", 480, 470);
         TopMost = true;
 
-        var top = new FlowLayoutPanel { Dock = DockStyle.Top, Padding = new Padding(10) };
-        top.Controls.Add(new Label { Text = "Adapter:", AutoSize = true, Padding = new Padding(0, 6, 6, 0) });
-        top.Controls.Add(_adapter);
+        Controls.Add(FormKit.Heading("Traffic Stopwatch", 24, 18));
+        Controls.Add(FormKit.Muted("Press Start, run your download or upload, then press Stop to see how fast it was.", 24, 54, 432, 40));
 
-        var grid = new TableLayoutPanel
+        Controls.Add(FormKit.Caption("Adapter", 24, 108));
+        FormKit.Place(_adapter, 24, 130, 432);
+        Controls.Add(_adapter);
+        FormKit.StyleInputs(_adapter);
+
+        _elapsed.Location = new Point(22, 176);
+        Controls.Add(_elapsed);
+
+        _toggle.Location = new Point(342, 180);
+        Theme.StyleButton(_toggle, primary: true);
+        Controls.Add(_toggle);
+
+        // Results card
+        var card = new Panel { Location = new Point(24, 244), Size = new Size(432, 152), BackColor = Theme.SurfaceAlt };
+        card.Paint += (_, e) =>
         {
-            Dock = DockStyle.Top,
-            ColumnCount = 3,
-            RowCount = 5,
-            Padding = new Padding(10),
-            AutoSize = true
+            using var pen = new Pen(Theme.Border);
+            e.Graphics.DrawRectangle(pen, 0, 0, card.Width - 1, card.Height - 1);
         };
-        grid.Controls.Add(new Label { Text = "", AutoSize = true }, 0, 0);
-        grid.Controls.Add(new Label { Text = "Download", AutoSize = true, Font = new Font(Font, FontStyle.Bold) }, 1, 0);
-        grid.Controls.Add(new Label { Text = "Upload", AutoSize = true, Font = new Font(Font, FontStyle.Bold) }, 2, 0);
 
-        AddRow(grid, 1, "Total:", _totalDown, _totalUp);
-        AddRow(grid, 2, "Maximum Rate:", _maxDown, _maxUp);
-        AddRow(grid, 3, "Minimum Rate:", _minDown, _minUp);
-        AddRow(grid, 4, "Average Rate:", _avgDown, _avgUp);
+        AddCardHeader(card, "Download", 170);
+        AddCardHeader(card, "Upload", 300);
+        AddCardRow(card, 34, "Total", _totalDown, _totalUp);
+        AddCardRow(card, 62, "Maximum rate", _maxDown, _maxUp);
+        AddCardRow(card, 90, "Minimum rate", _minDown, _minUp);
+        AddCardRow(card, 118, "Average rate", _avgDown, _avgUp);
+        Controls.Add(card);
 
-        var bottom = new FlowLayoutPanel { Dock = DockStyle.Top, Padding = new Padding(10) };
-        bottom.Controls.Add(_toggle);
-        bottom.Controls.Add(new Panel { Width = 20 });
-        bottom.Controls.Add(_elapsed);
+        Theme.StyleButton(_close);
+        FormKit.AddFooter(this, _alwaysOnTop, _close);
+        CancelButton = _close;
 
-        var optionsPanel = new FlowLayoutPanel { Dock = DockStyle.Top, Padding = new Padding(10) };
-        optionsPanel.Controls.Add(_alwaysOnTop);
         _alwaysOnTop.CheckedChanged += (_, _) => TopMost = _alwaysOnTop.Checked;
-
-        Controls.Add(bottom);
-        Controls.Add(grid);
-        Controls.Add(optionsPanel);
-        Controls.Add(top);
-
         _toggle.Click += (_, _) => ToggleRunning();
 
         PopulateAdapters();
@@ -90,15 +89,27 @@ public sealed class StopwatchForm : Form
         FormClosing += (_, _) => _sampler.SamplesReady -= OnSamples;
     }
 
-    private static void AddRow(TableLayoutPanel grid, int row, string label, Label down, Label up)
+    private static Label ValueLabel() => new() { Text = "--", AutoSize = true, ForeColor = Theme.TextPrimary };
+
+    private static void AddCardHeader(Panel card, string text, int x)
     {
-        grid.Controls.Add(new Label { Text = label, AutoSize = true, Padding = new Padding(0, 4, 10, 0) }, 0, row);
-        down.AutoSize = true;
-        down.Padding = new Padding(0, 4, 20, 0);
-        up.AutoSize = true;
-        up.Padding = new Padding(0, 4, 0, 0);
-        grid.Controls.Add(down, 1, row);
-        grid.Controls.Add(up, 2, row);
+        card.Controls.Add(new Label
+        {
+            Text = text,
+            Font = Theme.Ui(9f, FontStyle.Bold),
+            ForeColor = Theme.TextMuted,
+            AutoSize = true,
+            Location = new Point(x, 10)
+        });
+    }
+
+    private static void AddCardRow(Panel card, int y, string label, Label down, Label up)
+    {
+        card.Controls.Add(new Label { Text = label, AutoSize = true, ForeColor = Theme.TextMuted, Location = new Point(14, y) });
+        down.Location = new Point(170, y);
+        up.Location = new Point(300, y);
+        card.Controls.Add(down);
+        card.Controls.Add(up);
     }
 
     private void PopulateAdapters()
@@ -152,10 +163,9 @@ public sealed class StopwatchForm : Form
         double down = relevant.Sum(s => s.DownloadBps);
         double up = relevant.Sum(s => s.UploadBps);
 
-        // Sampler ticks at ~1Hz, so a rate in bytes/sec is a reasonable
-        // stand-in for "bytes transferred this tick".
-        _totalDownBytes += (long)down;
-        _totalUpBytes += (long)up;
+        // Exact bytes moved since the previous sample (reset-safe).
+        _totalDownBytes += relevant.Sum(s => s.DeltaBytesReceived);
+        _totalUpBytes += relevant.Sum(s => s.DeltaBytesSent);
         _maxDownRate = Math.Max(_maxDownRate, down);
         _maxUpRate = Math.Max(_maxUpRate, up);
         _minDownRate = Math.Min(_minDownRate, down);

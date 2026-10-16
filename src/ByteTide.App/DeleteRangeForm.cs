@@ -20,6 +20,8 @@ public sealed class DeleteRangeForm : Form
         ClientSize = new Size(440, 236);
         BackColor = Theme.Surface;
         Font = Theme.Ui();
+        AutoScaleDimensions = new SizeF(96f, 96f);
+        AutoScaleMode = AutoScaleMode.Dpi;
 
         var info = new Label
         {

@@ -22,6 +22,41 @@ internal static class Theme
     public static readonly Color DarkBorder = Color.FromArgb(70, 70, 80);
     public static readonly Color DarkText = Color.FromArgb(235, 235, 240);
 
+    /// <summary>True when the main window is currently using the dark scheme.</summary>
+    public static bool IsDark { get; private set; } = true;
+
+    public static MenuPalette Menu => IsDark ? MenuPalette.Dark : MenuPalette.Light;
+
+    public static ToolStripProfessionalRenderer CreateMenuRenderer() => new ModernMenuRenderer(Menu);
+
+    /// <summary>Resolves a theme setting to dark/light and remembers it for menus created elsewhere (the tray).</summary>
+    public static bool Resolve(ThemeMode mode)
+    {
+        bool dark = mode switch
+        {
+            ThemeMode.Dark => true,
+            ThemeMode.Light => false,
+            _ => WindowsPrefersDark()
+        };
+        IsDark = dark;
+        return dark;
+    }
+
+    private static bool WindowsPrefersDark()
+    {
+        try
+        {
+            var value = Microsoft.Win32.Registry.GetValue(
+                @"HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize",
+                "AppsUseLightTheme", 1);
+            return value is int light && light == 0;
+        }
+        catch
+        {
+            return true;
+        }
+    }
+
     public static Font Ui(float size = 9f, FontStyle style = FontStyle.Regular) => new("Segoe UI", size, style);
 
     public static Font UiSemibold(float size) => new("Segoe UI Semibold", size);
@@ -108,23 +143,68 @@ internal static class Theme
     }
 }
 
-/// <summary>Dark, flat menu and status-bar renderer matching the black graph window.</summary>
-internal sealed class DarkMenuRenderer : ToolStripProfessionalRenderer
+/// <summary>Colours for menus, drop-downs and the status bar.</summary>
+internal sealed class MenuPalette
 {
-    public DarkMenuRenderer() : base(new DarkColors())
+    public Color Bar, Dropdown, Hover, Border, Text, DisabledText, Arrow;
+
+    public static readonly MenuPalette Dark = new()
     {
+        Bar = Color.FromArgb(24, 24, 28), Dropdown = Color.FromArgb(32, 32, 38), Hover = Color.FromArgb(62, 62, 72),
+        Border = Color.FromArgb(70, 70, 80), Text = Color.FromArgb(235, 235, 240),
+        DisabledText = Color.FromArgb(130, 130, 140), Arrow = Color.FromArgb(200, 200, 208)
+    };
+
+    public static readonly MenuPalette Light = new()
+    {
+        Bar = Color.FromArgb(243, 244, 246), Dropdown = Color.White, Hover = Color.FromArgb(229, 239, 250),
+        Border = Color.FromArgb(218, 221, 226), Text = Color.FromArgb(32, 33, 36),
+        DisabledText = Color.FromArgb(150, 153, 160), Arrow = Color.FromArgb(90, 94, 102)
+    };
+}
+
+/// <summary>Colours for the live graph.</summary>
+internal sealed class GraphPalette
+{
+    public Color Background, Grid, AxisText, OverlayText, DownFill, DownLine, UpFill, UpLine;
+
+    public static readonly GraphPalette Dark = new()
+    {
+        Background = Color.Black, Grid = Color.FromArgb(58, 58, 62), AxisText = Color.FromArgb(120, 220, 120),
+        OverlayText = Color.FromArgb(225, 225, 230),
+        DownFill = Color.FromArgb(28, 92, 205), DownLine = Color.FromArgb(110, 175, 255),
+        UpFill = Color.FromArgb(190, 35, 35), UpLine = Color.FromArgb(255, 105, 105)
+    };
+
+    public static readonly GraphPalette Light = new()
+    {
+        Background = Color.White, Grid = Color.FromArgb(208, 212, 218), AxisText = Color.FromArgb(30, 120, 60),
+        OverlayText = Color.FromArgb(40, 42, 48),
+        DownFill = Color.FromArgb(120, 170, 245), DownLine = Color.FromArgb(25, 90, 205),
+        UpFill = Color.FromArgb(245, 150, 140), UpLine = Color.FromArgb(185, 35, 25)
+    };
+}
+
+/// <summary>Flat menu / status-bar renderer in either the dark or the light palette.</summary>
+internal sealed class ModernMenuRenderer : ToolStripProfessionalRenderer
+{
+    private readonly MenuPalette _p;
+
+    public ModernMenuRenderer(MenuPalette palette) : base(new Colors(palette))
+    {
+        _p = palette;
         RoundedEdges = false;
     }
 
     protected override void OnRenderItemText(ToolStripItemTextRenderEventArgs e)
     {
-        e.TextColor = e.Item.Enabled ? Theme.DarkText : Color.FromArgb(130, 130, 140);
+        e.TextColor = e.Item.Enabled ? _p.Text : _p.DisabledText;
         base.OnRenderItemText(e);
     }
 
     protected override void OnRenderArrow(ToolStripArrowRenderEventArgs e)
     {
-        e.ArrowColor = Color.FromArgb(200, 200, 208);
+        e.ArrowColor = _p.Arrow;
         base.OnRenderArrow(e);
     }
 
@@ -133,7 +213,7 @@ internal sealed class DarkMenuRenderer : ToolStripProfessionalRenderer
         var g = e.Graphics;
         var r = e.ImageRectangle;
 
-        using (var back = new SolidBrush(Color.FromArgb(0, 95, 175)))
+        using (var back = new SolidBrush(Theme.Accent))
             g.FillRectangle(back, r);
 
         var old = g.SmoothingMode;
@@ -150,31 +230,37 @@ internal sealed class DarkMenuRenderer : ToolStripProfessionalRenderer
         g.SmoothingMode = old;
     }
 
-    private sealed class DarkColors : ProfessionalColorTable
+    private sealed class Colors : ProfessionalColorTable
     {
-        public DarkColors() { UseSystemColors = false; }
+        private readonly MenuPalette _c;
 
-        public override Color ToolStripDropDownBackground => Theme.DarkMenu;
-        public override Color ImageMarginGradientBegin => Theme.DarkMenu;
-        public override Color ImageMarginGradientMiddle => Theme.DarkMenu;
-        public override Color ImageMarginGradientEnd => Theme.DarkMenu;
-        public override Color MenuBorder => Theme.DarkBorder;
-        public override Color MenuItemBorder => Theme.DarkHover;
-        public override Color MenuItemSelected => Theme.DarkHover;
-        public override Color MenuItemSelectedGradientBegin => Theme.DarkHover;
-        public override Color MenuItemSelectedGradientEnd => Theme.DarkHover;
-        public override Color MenuItemPressedGradientBegin => Theme.DarkHover;
-        public override Color MenuItemPressedGradientMiddle => Theme.DarkHover;
-        public override Color MenuItemPressedGradientEnd => Theme.DarkHover;
-        public override Color MenuStripGradientBegin => Theme.DarkSurface;
-        public override Color MenuStripGradientEnd => Theme.DarkSurface;
-        public override Color SeparatorDark => Theme.DarkBorder;
-        public override Color SeparatorLight => Theme.DarkBorder;
-        public override Color ToolStripBorder => Theme.DarkSurface;
-        public override Color StatusStripGradientBegin => Color.FromArgb(20, 20, 24);
-        public override Color StatusStripGradientEnd => Color.FromArgb(20, 20, 24);
-        public override Color CheckBackground => Color.FromArgb(0, 95, 175);
-        public override Color CheckSelectedBackground => Color.FromArgb(0, 95, 175);
-        public override Color CheckPressedBackground => Color.FromArgb(0, 95, 175);
+        public Colors(MenuPalette c)
+        {
+            _c = c;
+            UseSystemColors = false;
+        }
+
+        public override Color ToolStripDropDownBackground => _c.Dropdown;
+        public override Color ImageMarginGradientBegin => _c.Dropdown;
+        public override Color ImageMarginGradientMiddle => _c.Dropdown;
+        public override Color ImageMarginGradientEnd => _c.Dropdown;
+        public override Color MenuBorder => _c.Border;
+        public override Color MenuItemBorder => _c.Hover;
+        public override Color MenuItemSelected => _c.Hover;
+        public override Color MenuItemSelectedGradientBegin => _c.Hover;
+        public override Color MenuItemSelectedGradientEnd => _c.Hover;
+        public override Color MenuItemPressedGradientBegin => _c.Hover;
+        public override Color MenuItemPressedGradientMiddle => _c.Hover;
+        public override Color MenuItemPressedGradientEnd => _c.Hover;
+        public override Color MenuStripGradientBegin => _c.Bar;
+        public override Color MenuStripGradientEnd => _c.Bar;
+        public override Color SeparatorDark => _c.Border;
+        public override Color SeparatorLight => _c.Border;
+        public override Color ToolStripBorder => _c.Bar;
+        public override Color StatusStripGradientBegin => _c.Bar;
+        public override Color StatusStripGradientEnd => _c.Bar;
+        public override Color CheckBackground => Theme.Accent;
+        public override Color CheckSelectedBackground => Theme.Accent;
+        public override Color CheckPressedBackground => Theme.Accent;
     }
 }

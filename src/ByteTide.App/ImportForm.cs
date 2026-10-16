@@ -34,6 +34,8 @@ public sealed class ImportForm : Form
         ClientSize = new Size(548, 330);
         BackColor = Theme.Surface;
         Font = Theme.Ui();
+        AutoScaleDimensions = new SizeF(96f, 96f);
+        AutoScaleMode = AutoScaleMode.Dpi;
 
         var heading = new Label
         {

@@ -76,6 +76,9 @@ public sealed class MainForm : Form
 
         UpdateGraphAdapterLabel();
 
+        ApplyTheme();
+        Microsoft.Win32.SystemEvents.UserPreferenceChanged += OnSystemPreferenceChanged;
+
         Shown += (_, _) => ApplyClickThrough();
         FormClosing += (_, _) => SaveWindowOptions();
 
@@ -167,9 +170,6 @@ public sealed class MainForm : Form
 
     private void BuildMenu()
     {
-        _menu.Renderer = new DarkMenuRenderer();
-        _menu.BackColor = Theme.DarkSurface;
-        _menu.ForeColor = Theme.DarkText;
         _menu.Font = Theme.Ui(9f);
         _menu.Padding = new Padding(6, 3, 0, 3);
 
@@ -243,7 +243,7 @@ public sealed class MainForm : Form
 
             var id = nic.Id;
             bool virt = AdapterFilter.LooksVirtual(nic);
-            var item = new ToolStripMenuItem(nic.Description + (virt ? "  (virtual / VPN)" : ""))
+            var item = new ToolStripMenuItem(nic.Description + "  [" + LinkSpeedText(nic.Speed / 1_000_000.0) + "]" + (virt ? "  (virtual / VPN)" : ""))
             {
                 Checked = _sampler.IsTracked(nic)
             };
@@ -284,13 +284,12 @@ public sealed class MainForm : Form
 
     public void PopulateViewMenu(ToolStripItemCollection items)
     {
-        AddToggle(items, "Title", () => _graphOptions.ShowTitle, v => _graphOptions.ShowTitle = v);
-        AddToggle(items, "IP Address", () => _graphOptions.ShowIpAddress, v => _graphOptions.ShowIpAddress = v);
-        items.Add(new ToolStripSeparator());
-
-        AddStyleItem(items, "Graph (Area)", GraphStyle.Area);
-        AddStyleItem(items, "Column Graph", GraphStyle.Column);
-        AddStyleItem(items, "Line Graph", GraphStyle.Line);
+        // Grouped into submenus so the menu stays short enough to fit on screen.
+        var style = new ToolStripMenuItem("Graph style");
+        AddStyleItem(style.DropDownItems, "Area", GraphStyle.Area);
+        AddStyleItem(style.DropDownItems, "Column", GraphStyle.Column);
+        AddStyleItem(style.DropDownItems, "Line", GraphStyle.Line);
+        items.Add(style);
 
         var widthMenu = new ToolStripMenuItem("Graph width (pixels per second)");
         foreach (var px in new[] { 1, 2, 3, 4, 6 })
@@ -307,22 +306,57 @@ public sealed class MainForm : Form
         items.Add(widthMenu);
         items.Add(new ToolStripSeparator());
 
-        AddToggle(items, "Scale", () => _graphOptions.ShowScale, v => _graphOptions.ShowScale = v);
-        AddToggle(items, "Scale Grid", () => _graphOptions.ShowScaleGrid, v => _graphOptions.ShowScaleGrid = v);
-        AddToggle(items, "Time", () => _graphOptions.ShowTime, v => _graphOptions.ShowTime = v);
-        AddToggle(items, "Time Grid", () => _graphOptions.ShowTimeGrid, v => _graphOptions.ShowTimeGrid = v);
+        // Toggle groups stay open while you click, so several options can be changed in one go.
+        var grid = new ToolStripMenuItem("Grid and labels");
+        AddToggle(grid.DropDownItems, "Scale labels", () => _graphOptions.ShowScale, v => _graphOptions.ShowScale = v);
+        AddToggle(grid.DropDownItems, "Scale gridlines", () => _graphOptions.ShowScaleGrid, v => _graphOptions.ShowScaleGrid = v);
+        AddToggle(grid.DropDownItems, "Time labels", () => _graphOptions.ShowTime, v => _graphOptions.ShowTime = v);
+        AddToggle(grid.DropDownItems, "Time gridlines", () => _graphOptions.ShowTimeGrid, v => _graphOptions.ShowTimeGrid = v);
+        KeepOpenWhileToggling(grid);
+        items.Add(grid);
+
+        var averages = new ToolStripMenuItem("Average lines");
+        AddToggle(averages.DropDownItems, "Average download line", () => _graphOptions.ShowAverageDownloadLine, v => _graphOptions.ShowAverageDownloadLine = v);
+        AddToggle(averages.DropDownItems, "Average upload line", () => _graphOptions.ShowAverageUploadLine, v => _graphOptions.ShowAverageUploadLine = v);
+        KeepOpenWhileToggling(averages);
+        items.Add(averages);
+
+        var text = new ToolStripMenuItem("Text overlay");
+        AddToggle(text.DropDownItems, "Show text", () => _graphOptions.ShowText, v => _graphOptions.ShowText = v);
+        text.DropDownItems.Add(new ToolStripSeparator());
+        AddToggle(text.DropDownItems, "Adapter name", () => _graphOptions.ShowTitle, v => _graphOptions.ShowTitle = v);
+        AddToggle(text.DropDownItems, "IP address", () => _graphOptions.ShowIpAddress, v => _graphOptions.ShowIpAddress = v);
+        AddToggle(text.DropDownItems, "Max rate", () => _graphOptions.ShowMaxRate, v => _graphOptions.ShowMaxRate = v);
+        AddToggle(text.DropDownItems, "Average speeds", () => _graphOptions.ShowAverageSpeeds, v => _graphOptions.ShowAverageSpeeds = v);
+        KeepOpenWhileToggling(text);
+        items.Add(text);
+
         items.Add(new ToolStripSeparator());
 
-        AddToggle(items, "Average Download Line", () => _graphOptions.ShowAverageDownloadLine, v => _graphOptions.ShowAverageDownloadLine = v);
-        AddToggle(items, "Average Upload Line", () => _graphOptions.ShowAverageUploadLine, v => _graphOptions.ShowAverageUploadLine = v);
-        items.Add(new ToolStripSeparator());
+        var units = new ToolStripMenuItem("Speed units");
+        AddUnitItem(units, "Bytes per second (KB/s, MB/s)", false);
+        AddUnitItem(units, "Bits per second (kbps, Mbps)", true);
+        items.Add(units);
+    }
 
-        AddToggle(items, "Text", () => _graphOptions.ShowText, v => _graphOptions.ShowText = v);
-        AddToggle(items, "Max Rate", () => _graphOptions.ShowMaxRate, v => _graphOptions.ShowMaxRate = v);
-        AddToggle(items, "Average Speeds", () => _graphOptions.ShowAverageSpeeds, v => _graphOptions.ShowAverageSpeeds = v);
-        items.Add(new ToolStripSeparator());
+    private void AddUnitItem(ToolStripMenuItem parent, string text, bool bits)
+    {
+        var item = new ToolStripMenuItem(text) { Checked = _graphOptions.UseKbps == bits };
+        item.Click += (_, _) =>
+        {
+            _graphOptions.UseKbps = bits;
+            SaveGraphOptions();
+        };
+        parent.DropDownItems.Add(item);
+    }
 
-        AddToggle(items, "Use kbps (instead of KB/s)", () => _graphOptions.UseKbps, v => _graphOptions.UseKbps = v);
+    /// <summary>Stops a submenu from closing when one of its check items is clicked.</summary>
+    private static void KeepOpenWhileToggling(ToolStripMenuItem submenu)
+    {
+        submenu.DropDown.Closing += (_, e) =>
+        {
+            if (e.CloseReason == ToolStripDropDownCloseReason.ItemClicked) e.Cancel = true;
+        };
     }
 
     private void AddStyleItem(ToolStripItemCollection items, string text, GraphStyle style)
@@ -343,6 +377,7 @@ public sealed class MainForm : Form
         {
             setter(!getter());
             SaveGraphOptions();
+            item.Checked = getter();
         };
         parent.Add(item);
     }
@@ -381,6 +416,13 @@ public sealed class MainForm : Form
             SaveWindowOptions();
         };
 
+        var appearance = new ToolStripMenuItem("Appearance");
+        AddThemeItem(appearance, "Match Windows", ThemeMode.System);
+        AddThemeItem(appearance, "Dark", ThemeMode.Dark);
+        AddThemeItem(appearance, "Light", ThemeMode.Light);
+
+        items.Add(appearance);
+        items.Add(new ToolStripSeparator());
         items.Add(alwaysOnTop);
         items.Add(semiTransparent);
         items.Add(clickThrough);
@@ -397,6 +439,18 @@ public sealed class MainForm : Form
         items.Add("Bandwidth Usage Notifications...", null, (_, _) => { beforeOpen?.Invoke(); OpenNotifications(); });
     }
 
+    private void AddThemeItem(ToolStripMenuItem parent, string text, ThemeMode mode)
+    {
+        var item = new ToolStripMenuItem(text) { Checked = _windowOptions.ThemeMode == mode };
+        item.Click += (_, _) =>
+        {
+            _windowOptions.ThemeMode = mode;
+            SaveWindowOptions();
+            ApplyTheme();
+        };
+        parent.DropDownItems.Add(item);
+    }
+
     private void ResetSessionTotals()
     {
         lock (_sessionLock)
@@ -409,7 +463,49 @@ public sealed class MainForm : Form
     protected override void OnHandleCreated(EventArgs e)
     {
         base.OnHandleCreated(e);
-        NativeMethods.UseDarkTitleBar(Handle, true);
+        NativeMethods.UseDarkTitleBar(Handle, Theme.IsDark);
+    }
+
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing) Microsoft.Win32.SystemEvents.UserPreferenceChanged -= OnSystemPreferenceChanged;
+        base.Dispose(disposing);
+    }
+
+    private void OnSystemPreferenceChanged(object? sender, Microsoft.Win32.UserPreferenceChangedEventArgs e)
+    {
+        if (_windowOptions.ThemeMode != ThemeMode.System) return;
+        if (IsDisposed || !IsHandleCreated) return;
+
+        try { BeginInvoke(new Action(ApplyTheme)); }
+        catch (InvalidOperationException) { /* closing */ }
+    }
+
+    /// <summary>Applies Dark / Light / Match Windows to the title bar, menus, status bar and graph.</summary>
+    private void ApplyTheme()
+    {
+        bool dark = Theme.Resolve(_windowOptions.ThemeMode);
+        var palette = Theme.Menu;
+
+        BackColor = dark ? Color.Black : Color.White;
+        _graph.ApplyPalette(dark ? GraphPalette.Dark : GraphPalette.Light);
+
+        _menu.Renderer = Theme.CreateMenuRenderer();
+        _menu.BackColor = palette.Bar;
+        _menu.ForeColor = palette.Text;
+
+        _status.Renderer = Theme.CreateMenuRenderer();
+        _status.BackColor = palette.Bar;
+
+        var statusColor = dark ? StatusTextColor : Color.FromArgb(24, 115, 52);
+        _lblLinkSpeed.ForeColor = statusColor;
+        _lblUptime.ForeColor = statusColor;
+        _lblTime.ForeColor = statusColor;
+        _lblDown.ForeColor = statusColor;
+        _lblUp.ForeColor = statusColor;
+
+        if (IsHandleCreated) NativeMethods.UseDarkTitleBar(Handle, dark);
+        Invalidate(true);
     }
 
     private void ApplyClickThrough()
@@ -464,9 +560,7 @@ public sealed class MainForm : Form
         // theme -- keeps it visually consistent with the black graph background
         // and, more importantly, guarantees the text renders in a color that's
         // never accidentally invisible against it.
-        _status.Renderer = new DarkMenuRenderer();
         _status.Font = Theme.Ui(9f);
-        _status.BackColor = Color.FromArgb(20, 20, 24);
         _status.SizingGrip = false;
 
         _lblLinkSpeed.ForeColor = StatusTextColor;
@@ -514,24 +608,15 @@ public sealed class MainForm : Form
         }
 
         double? linkSpeedMbps = null;
-        string? adapterForSpeed = _selectedAdapterId;
 
-        // In "All Connections" mode there's no single adapter to report a
-        // link speed for -- fall back to whichever adapter is carrying the
-        // most traffic this tick, rather than leaving the field blank.
-        if (adapterForSpeed is null && included.Count > 0)
-        {
-            adapterForSpeed = included
-                .OrderByDescending(s => s.DownloadBps + s.UploadBps)
-                .First().AdapterId;
-        }
+        // With several adapters up, "whichever is busiest this second" flips back
+        // and forth (1000 Mbps, 780 Mbps, 1000 ...). Instead follow the adapter that
+        // has carried the most traffic over the last ~10 seconds, and only switch
+        // when another one clearly takes over.
+        string? adapterForSpeed = _selectedAdapterId ?? ChoosePrimaryAdapter(included);
 
         if (adapterForSpeed is not null)
         {
-            // NetworkSampler already enumerated every adapter this tick and
-            // captured each one's Speed alongside its byte counters -- reuse
-            // that instead of calling the relatively expensive
-            // GetAllNetworkInterfaces() a second time per second just for this.
             var match = included.FirstOrDefault(s => s.AdapterId == adapterForSpeed);
             if (match is not null && match.SpeedBps > 0)
                 linkSpeedMbps = match.SpeedBps / 1_000_000.0;
@@ -550,12 +635,45 @@ public sealed class MainForm : Form
         }
     }
 
+    private string? _primaryAdapterId;
+    private readonly Dictionary<string, double> _recentTraffic = new();
+
+    private string? ChoosePrimaryAdapter(IReadOnlyList<LiveSample> samples)
+    {
+        if (samples.Count == 0) return _primaryAdapterId;
+
+        foreach (var s in samples)
+        {
+            _recentTraffic.TryGetValue(s.AdapterId, out var ema);
+            _recentTraffic[s.AdapterId] = ema * 0.9 + (s.DownloadBps + s.UploadBps) * 0.1;
+        }
+
+        string best = samples[0].AdapterId;
+        foreach (var s in samples)
+            if (_recentTraffic[s.AdapterId] > _recentTraffic[best]) best = s.AdapterId;
+
+        bool keepCurrent =
+            _primaryAdapterId is not null &&
+            _recentTraffic.TryGetValue(_primaryAdapterId, out var currentLevel) &&
+            samples.Any(s => s.AdapterId == _primaryAdapterId) &&
+            currentLevel * 2 >= _recentTraffic[best];
+
+        if (!keepCurrent) _primaryAdapterId = best;
+        return _primaryAdapterId;
+    }
+
+    private static string LinkSpeedText(double mbps)
+    {
+        if (mbps <= 0) return "-- Mbps";
+        return mbps >= 1000 ? $"{mbps / 1000:0.#} Gbps" : $"{mbps:0.#} Mbps";
+    }
+
     private void UpdateUi(double down, double up, long sessionRx, long sessionTx, double? linkSpeedMbps)
     {
         _graph.AddSample(down, up);
 
         var uptime = DateTime.Now - _appStarted;
-        _lblLinkSpeed.Text = linkSpeedMbps is { } mbps ? $"{mbps:0.#} Mbps" : "-- Mbps";
+        _lblLinkSpeed.Text = linkSpeedMbps is { } mbps ? LinkSpeedText(mbps) : "-- Mbps";
         // Built from TotalHours rather than the "hh" custom format, which wraps
         // at 24h -- this app runs continuously from the tray, so uptime needs
         // to keep counting past a day rather than resetting to 00.
@@ -600,21 +718,18 @@ public sealed class MainForm : Form
     public void OpenRatesRecorder()
     {
         using var dlg = new RatesRecorderForm(_sampler);
-        Theme.ApplyDialog(dlg);
         dlg.ShowDialog(this);
     }
 
     public void OpenStopwatch()
     {
         using var dlg = new StopwatchForm(_sampler);
-        Theme.ApplyDialog(dlg);
         dlg.ShowDialog(this);
     }
 
     public void OpenNotifications()
     {
         using var dlg = new NotificationsForm(_storage);
-        Theme.ApplyDialog(dlg);
         dlg.ShowDialog(this);
     }
 }

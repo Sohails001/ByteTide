@@ -4,21 +4,22 @@ using ByteTide.Core;
 namespace ByteTide.App;
 
 /// <summary>
-/// "Traffic Rates Recorder" -- logs periodic download/upload rates for one
-/// adapter (or all combined) to a plain text or CSV file.
+/// "Rates Recorder" -- logs periodic download/upload rates for one adapter
+/// (or all combined) to a plain text or CSV file.
 /// </summary>
 public sealed class RatesRecorderForm : Form
 {
     private readonly NetworkSampler _sampler;
 
-    private readonly ComboBox _adapter = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 300 };
-    private readonly RadioButton _plainFormat = new() { Text = "Plain text", Checked = true };
-    private readonly RadioButton _csvFormat = new() { Text = "CSV" };
-    private readonly NumericUpDown _interval = new() { Minimum = 1, Maximum = 3600, Value = 1, Width = 60 };
-    private readonly TextBox _filePath = new() { Width = 320 };
+    private readonly ComboBox _adapter = new() { DropDownStyle = ComboBoxStyle.DropDownList };
+    private readonly RadioButton _plainFormat = new() { Text = "Plain text", Checked = true, AutoSize = true };
+    private readonly RadioButton _csvFormat = new() { Text = "CSV", AutoSize = true };
+    private readonly NumericUpDown _interval = new() { Minimum = 1, Maximum = 3600, Value = 1 };
+    private readonly TextBox _filePath = new();
     private readonly Button _browse = new() { Text = "Browse..." };
-    private readonly Button _toggle = new() { Text = "Start Recording" };
-    private readonly Label _status = new() { AutoSize = true, ForeColor = Color.DarkGreen };
+    private readonly Button _toggle = new() { Text = "Start recording" };
+    private readonly Button _close = new() { Text = "Close", DialogResult = DialogResult.Cancel };
+    private readonly Label _status = new() { AutoSize = true, ForeColor = Theme.TextMuted, Text = "Not recording." };
 
     private RatesRecorder? _recorder;
     private readonly List<string> _adapterIds = new();
@@ -27,32 +28,39 @@ public sealed class RatesRecorderForm : Form
     {
         _sampler = sampler;
 
-        Text = "Traffic Rates Recorder";
-        Width = 460;
-        Height = 260;
-        StartPosition = FormStartPosition.CenterParent;
+        FormKit.Setup(this, "Rates Recorder", 560, 360);
 
-        var layout = new TableLayoutPanel { Dock = DockStyle.Top, ColumnCount = 2, Padding = new Padding(12), AutoSize = true };
-        layout.Controls.Add(new Label { Text = "Adapter:", AutoSize = true, Padding = new Padding(0, 6, 0, 0) });
-        layout.Controls.Add(_adapter);
+        Controls.Add(FormKit.Heading("Rates Recorder", 24, 18));
+        Controls.Add(FormKit.Muted("Log download and upload rates to a text or CSV file at a regular interval.", 24, 54, 512, 22));
 
-        var formatPanel = new FlowLayoutPanel { AutoSize = true };
-        formatPanel.Controls.Add(_plainFormat);
-        formatPanel.Controls.Add(_csvFormat);
-        layout.Controls.Add(new Label { Text = "Format:", AutoSize = true, Padding = new Padding(0, 6, 0, 0) });
-        layout.Controls.Add(formatPanel);
+        Controls.Add(FormKit.Caption("Adapter", 24, 108));
+        FormKit.Place(_adapter, 160, 104, 376);
+        Controls.Add(_adapter);
 
-        var intervalPanel = new FlowLayoutPanel { AutoSize = true };
-        intervalPanel.Controls.Add(_interval);
-        intervalPanel.Controls.Add(new Label { Text = "second(s)", AutoSize = true, Padding = new Padding(4, 6, 0, 0) });
-        layout.Controls.Add(new Label { Text = "Recording interval:", AutoSize = true, Padding = new Padding(0, 6, 0, 0) });
-        layout.Controls.Add(intervalPanel);
+        Controls.Add(FormKit.Caption("Format", 24, 150));
+        _plainFormat.Location = new Point(160, 148);
+        _csvFormat.Location = new Point(280, 148);
+        Controls.Add(_plainFormat);
+        Controls.Add(_csvFormat);
 
-        var filePanel = new FlowLayoutPanel { AutoSize = true };
-        filePanel.Controls.Add(_filePath);
-        filePanel.Controls.Add(_browse);
-        layout.Controls.Add(new Label { Text = "Save rates to:", AutoSize = true, Padding = new Padding(0, 6, 0, 0) });
-        layout.Controls.Add(filePanel);
+        Controls.Add(FormKit.Caption("Record every", 24, 192));
+        FormKit.Place(_interval, 160, 188, 72);
+        Controls.Add(_interval);
+        Controls.Add(FormKit.Caption("second(s)", 242, 192));
+
+        Controls.Add(FormKit.Caption("Save to", 24, 234));
+        FormKit.Place(_filePath, 160, 230, 292);
+        Controls.Add(_filePath);
+        _browse.Location = new Point(462, 227);
+        Theme.StyleButton(_browse);
+        Controls.Add(_browse);
+
+        Theme.StyleButton(_toggle, primary: true);
+        Theme.StyleButton(_close);
+        FormKit.AddFooter(this, _status, _close, _toggle);
+        CancelButton = _close;
+
+        FormKit.StyleInputs(_adapter, _filePath);
 
         _browse.Click += (_, _) =>
         {
@@ -65,14 +73,6 @@ public sealed class RatesRecorderForm : Form
         };
 
         _toggle.Click += (_, _) => ToggleRecording();
-
-        var bottom = new FlowLayoutPanel { Dock = DockStyle.Top, Padding = new Padding(12) };
-        bottom.Controls.Add(_toggle);
-        bottom.Controls.Add(new Panel { Width = 12 });
-        bottom.Controls.Add(_status);
-
-        Controls.Add(bottom);
-        Controls.Add(layout);
 
         PopulateAdapters();
 
@@ -102,8 +102,9 @@ public sealed class RatesRecorderForm : Form
         {
             _recorder.Dispose();
             _recorder = null;
-            _toggle.Text = "Start Recording";
+            _toggle.Text = "Start recording";
             _status.Text = "Stopped.";
+            _status.ForeColor = Theme.TextMuted;
             SetInputsEnabled(true);
             return;
         }
@@ -118,8 +119,9 @@ public sealed class RatesRecorderForm : Form
         var interval = TimeSpan.FromSeconds((double)_interval.Value);
 
         _recorder = new RatesRecorder(_sampler, adapterId, interval, _filePath.Text, _csvFormat.Checked);
-        _toggle.Text = "Stop Recording";
+        _toggle.Text = "Stop recording";
         _status.Text = $"Recording to {Path.GetFileName(_filePath.Text)}...";
+        _status.ForeColor = Color.FromArgb(24, 115, 52);
         SetInputsEnabled(false);
     }
 

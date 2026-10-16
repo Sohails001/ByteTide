@@ -20,6 +20,8 @@ public sealed class AboutForm : Form
         ClientSize = new Size(560, 340);
         BackColor = Theme.Surface;
         Font = Theme.Ui();
+        AutoScaleDimensions = new SizeF(96f, 96f);
+        AutoScaleMode = AutoScaleMode.Dpi;
 
         var logo = new LogoControl { Location = new Point(32, 32), Size = new Size(84, 84) };
 

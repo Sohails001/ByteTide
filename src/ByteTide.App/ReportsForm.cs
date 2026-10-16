@@ -50,6 +50,8 @@ public sealed class ReportsForm : Form
         StartPosition = FormStartPosition.CenterParent;
         BackColor = Theme.Surface;
         Font = Theme.Ui();
+        AutoScaleDimensions = new SizeF(96f, 96f);
+        AutoScaleMode = AutoScaleMode.Dpi;
 
         // ----- Header: title + adapter picker
         var header = new Panel { Dock = DockStyle.Top, Height = 74, BackColor = Theme.Surface };

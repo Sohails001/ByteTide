@@ -44,86 +44,102 @@ public sealed class NotificationsForm : Form
     {
         _storage = storage;
 
-        Text = "Bandwidth Usage Notification";
-        Width = 560;
-        Height = 480;
-        StartPosition = FormStartPosition.CenterParent;
+        FormKit.Setup(this, "Usage Notifications", 620, 540);
 
         _unit.Items.AddRange(new object[] { "MB", "GB" });
         _measure.Items.AddRange(new object[] { "downloaded", "uploaded", "both" });
         _period.Items.AddRange(new object[] { "today", "week", "month", "year" });
 
-        var top = new FlowLayoutPanel { Dock = DockStyle.Top, AutoSize = true, Padding = new Padding(12) };
-        top.Controls.Add(_enable);
+        Controls.Add(FormKit.Heading("Usage Notifications", 24, 18));
+        Controls.Add(FormKit.Muted("Get alerted when your usage crosses a limit, for example more than 2 GB downloaded this month.", 24, 54, 572, 22));
 
-        var thresholdLine = new FlowLayoutPanel { Dock = DockStyle.Top, AutoSize = true, Padding = new Padding(12, 0, 12, 0) };
-        thresholdLine.Controls.Add(new Label { Text = "When more than", AutoSize = true, Padding = new Padding(0, 6, 4, 0) });
-        thresholdLine.Controls.Add(_amount);
-        thresholdLine.Controls.Add(_unit);
-        thresholdLine.Controls.Add(new Label { Text = "were", AutoSize = true, Padding = new Padding(8, 6, 4, 0) });
-        thresholdLine.Controls.Add(_measure);
+        _enable.Location = new Point(24, 90);
+        _enable.AutoSize = true;
+        Controls.Add(_enable);
 
-        var periodLine = new FlowLayoutPanel { Dock = DockStyle.Top, AutoSize = true, Padding = new Padding(12, 0, 12, 0) };
-        periodLine.Controls.Add(new Label { Text = "in the current", AutoSize = true, Padding = new Padding(0, 6, 4, 0) });
-        periodLine.Controls.Add(_period);
-        periodLine.Controls.Add(new Label { Text = "through", AutoSize = true, Padding = new Padding(8, 6, 4, 0) });
-        periodLine.Controls.Add(_adapter);
+        // "When more than [2] [GB] were [downloaded]"
+        Controls.Add(FormKit.Caption("When more than", 24, 134));
+        FormKit.Place(_amount, 150, 130, 84);
+        FormKit.Place(_unit, 242, 130, 64);
+        Controls.Add(FormKit.Caption("were", 316, 134));
+        FormKit.Place(_measure, 360, 130, 130);
+        Controls.Add(_amount);
+        Controls.Add(_unit);
+        Controls.Add(_measure);
 
-        var soundLine = new FlowLayoutPanel { Dock = DockStyle.Top, AutoSize = true, Padding = new Padding(12, 6, 12, 0) };
-        soundLine.Controls.Add(_playSound);
-        soundLine.Controls.Add(_soundPath);
-        soundLine.Controls.Add(_browseSound);
+        // "in the current [month] through [All Connections]"
+        Controls.Add(FormKit.Caption("in the current", 24, 176));
+        FormKit.Place(_period, 150, 172, 100);
+        Controls.Add(FormKit.Caption("through", 262, 176));
+        FormKit.Place(_adapter, 330, 172, 266);
+        Controls.Add(_period);
+        Controls.Add(_adapter);
+
+        var divider = new Panel { BackColor = Theme.Border, Location = new Point(24, 220), Size = new Size(572, 1) };
+        Controls.Add(divider);
+        Controls.Add(new Label { Text = "When that happens", Font = Theme.Ui(9f, FontStyle.Bold), ForeColor = Theme.TextMuted, AutoSize = true, Location = new Point(24, 232) });
+
+        // Sound
+        _playSound.Location = new Point(24, 266);
+        _playSound.AutoSize = true;
+        FormKit.Place(_soundPath, 190, 264, 340);
+        _browseSound.Location = new Point(538, 262);
+        Theme.StyleButton(_browseSound);
+        _browseSound.MinimumSize = new Size(58, 32);
         _browseSound.Click += (_, _) =>
         {
             using var dlg = new OpenFileDialog { Filter = "Wave files (*.wav)|*.wav|All files (*.*)|*.*" };
             if (dlg.ShowDialog(this) == DialogResult.OK) _soundPath.Text = dlg.FileName;
         };
 
-        var beepLine = new FlowLayoutPanel { Dock = DockStyle.Top, AutoSize = true, Padding = new Padding(12, 6, 12, 0) };
-        beepLine.Controls.Add(_playBeep);
+        // Beep
+        _playBeep.Location = new Point(24, 308);
+        _playBeep.AutoSize = true;
 
-        var emailLine = new FlowLayoutPanel { Dock = DockStyle.Top, AutoSize = true, Padding = new Padding(12, 6, 12, 0) };
-        emailLine.Controls.Add(_sendEmail);
-        emailLine.Controls.Add(_emailSettingsBtn);
+        // Email
+        _sendEmail.Location = new Point(24, 350);
+        _sendEmail.AutoSize = true;
+        _emailSettingsBtn.Location = new Point(190, 345);
+        Theme.StyleButton(_emailSettingsBtn);
         _emailSettingsBtn.Click += (_, _) =>
         {
             using var dlg = new EmailSettingsForm(_emailSettings);
-            Theme.ApplyDialog(dlg);
             if (dlg.ShowDialog(this) == DialogResult.OK) _emailSettings = dlg.Result;
         };
+        Controls.Add(FormKit.Caption("Send to", 44, 394));
+        FormKit.Place(_emailAddresses, 190, 390, 406);
 
-        var emailAddrLine = new FlowLayoutPanel { Dock = DockStyle.Top, AutoSize = true, Padding = new Padding(12, 0, 12, 0) };
-        emailAddrLine.Controls.Add(new Label { Text = "Address(es), comma-separated:", AutoSize = true, Padding = new Padding(0, 6, 4, 0) });
-        emailAddrLine.Controls.Add(_emailAddresses);
-
-        var programLine = new FlowLayoutPanel { Dock = DockStyle.Top, AutoSize = true, Padding = new Padding(12, 6, 12, 0) };
-        programLine.Controls.Add(_runProgram);
-        programLine.Controls.Add(_programPath);
-        programLine.Controls.Add(_browseProgram);
+        // Program
+        _runProgram.Location = new Point(24, 436);
+        _runProgram.AutoSize = true;
+        FormKit.Place(_programPath, 190, 434, 340);
+        _browseProgram.Location = new Point(538, 432);
+        Theme.StyleButton(_browseProgram);
+        _browseProgram.MinimumSize = new Size(58, 32);
         _browseProgram.Click += (_, _) =>
         {
             using var dlg = new OpenFileDialog { Filter = "Executable files (*.exe)|*.exe|All files (*.*)|*.*" };
             if (dlg.ShowDialog(this) == DialogResult.OK) _programPath.Text = dlg.FileName;
         };
 
-        var bottom = new FlowLayoutPanel { Dock = DockStyle.Bottom, Padding = new Padding(12), FlowDirection = FlowDirection.RightToLeft };
-        var ok = new Button { Text = "OK", DialogResult = DialogResult.OK };
+        Controls.AddRange(new Control[]
+        {
+            _playSound, _soundPath, _browseSound,
+            _playBeep,
+            _sendEmail, _emailSettingsBtn, _emailAddresses,
+            _runProgram, _programPath, _browseProgram
+        });
+
+        FormKit.StyleInputs(_unit, _measure, _period, _adapter, _soundPath, _emailAddresses, _programPath);
+
+        var ok = new Button { Text = "Save", DialogResult = DialogResult.OK };
         var cancel = new Button { Text = "Cancel", DialogResult = DialogResult.Cancel };
-        bottom.Controls.Add(cancel);
-        bottom.Controls.Add(ok);
+        Theme.StyleButton(ok, primary: true);
+        Theme.StyleButton(cancel);
         AcceptButton = ok;
         CancelButton = cancel;
         ok.Click += (_, _) => SaveSettings();
-
-        Controls.Add(bottom);
-        Controls.Add(programLine);
-        Controls.Add(emailAddrLine);
-        Controls.Add(emailLine);
-        Controls.Add(beepLine);
-        Controls.Add(soundLine);
-        Controls.Add(periodLine);
-        Controls.Add(thresholdLine);
-        Controls.Add(top);
+        FormKit.AddFooter(this, null, cancel, ok);
 
         PopulateAdapters();
         LoadSettings();

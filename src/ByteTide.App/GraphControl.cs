@@ -26,17 +26,19 @@ public sealed class GraphControl : Control
 
     private static readonly int[] TimeGridSeconds = { 10, 30, 60, 120, 300, 600, 900, 1800, 3600, 7200 };
 
-    private static readonly Color DownFill = Color.FromArgb(28, 92, 205);
-    private static readonly Color DownLine = Color.FromArgb(110, 175, 255);
-    private static readonly Color UpFill = Color.FromArgb(190, 35, 35);
-    private static readonly Color UpLine = Color.FromArgb(255, 105, 105);
+    // Colours come from the active palette (dark or light) and are swapped by ApplyPalette.
+    private Color DownFill;
+    private Color DownLine;
+    private Color UpFill;
+    private Color UpLine;
+    private Color _background = Color.Black;
+    private Pen _gridPen = null!;
+    private Brush _axisTextBrush = null!;
+    private Brush _overlayTextBrush = null!;
 
-    // Created once and reused on every repaint.
-    private static readonly Pen GridPen = new(Color.FromArgb(58, 58, 62)) { DashStyle = DashStyle.Dot };
+    // Fonts never change, so they're created once and shared.
     private static readonly Font AxisFont = new("Segoe UI", 8f);
-    private static readonly Brush AxisTextBrush = new SolidBrush(Color.FromArgb(120, 220, 120));
     private static readonly Font OverlayFont = new("Segoe UI Semibold", 9f);
-    private static readonly Brush OverlayTextBrush = new SolidBrush(Color.FromArgb(225, 225, 230));
     private static readonly Font OverlaySmallFont = new("Segoe UI", 8f);
 
     public GraphOptions Options { get; set; } = new();
@@ -50,8 +52,27 @@ public sealed class GraphControl : Control
     public GraphControl()
     {
         DoubleBuffered = true;
-        BackColor = Color.Black;
         ResizeRedraw = true;
+        ApplyPalette(GraphPalette.Dark);
+    }
+
+    internal void ApplyPalette(GraphPalette p)
+    {
+        _background = p.Background;
+        BackColor = p.Background;
+        DownFill = p.DownFill;
+        DownLine = p.DownLine;
+        UpFill = p.UpFill;
+        UpLine = p.UpLine;
+
+        _gridPen?.Dispose();
+        _gridPen = new Pen(p.Grid) { DashStyle = DashStyle.Dot };
+        _axisTextBrush?.Dispose();
+        _axisTextBrush = new SolidBrush(p.AxisText);
+        _overlayTextBrush?.Dispose();
+        _overlayTextBrush = new SolidBrush(p.OverlayText);
+
+        Invalidate();
     }
 
     public void AddSample(double downBytesPerSec, double upBytesPerSec)
@@ -80,7 +101,7 @@ public sealed class GraphControl : Control
 
         int w = ClientSize.Width;
         int h = ClientSize.Height;
-        g.Clear(Color.Black);
+        g.Clear(_background);
 
         if (w < 8 || h < 8) return;
 
@@ -219,12 +240,12 @@ public sealed class GraphControl : Control
             int y = h - 1 - (h - 1) * i / divisions;
 
             if (Options.ShowScaleGrid)
-                g.DrawLine(GridPen, 0, y, w, y);
+                g.DrawLine(_gridPen, 0, y, w, y);
 
             if (Options.ShowScale)
             {
                 var label = FormatRate(scale * i / divisions);
-                g.DrawString(label, AxisFont, AxisTextBrush, 3, Math.Max(0, y - 1));
+                g.DrawString(label, AxisFont, _axisTextBrush, 3, Math.Max(0, y - 1));
             }
         }
     }
@@ -256,14 +277,14 @@ public sealed class GraphControl : Control
             if (x < 0 || x >= w) continue;
 
             if (Options.ShowTimeGrid)
-                g.DrawLine(GridPen, x, 0, x, h);
+                g.DrawLine(_gridPen, x, 0, x, h);
 
             if (Options.ShowTime)
             {
                 var label = new DateTime(bucket * ticksPerStep).ToString(format);
                 var size = g.MeasureString(label, AxisFont);
                 float lx = Math.Min(w - size.Width - 2, x + 3);
-                g.DrawString(label, AxisFont, AxisTextBrush, Math.Max(2, lx), h - size.Height - 1);
+                g.DrawString(label, AxisFont, _axisTextBrush, Math.Max(2, lx), h - size.Height - 1);
             }
         }
     }
@@ -279,7 +300,7 @@ public sealed class GraphControl : Control
             var label = Options.ShowIpAddress && CurrentIpAddress.Length > 0
                 ? $"{CurrentAdapterLabel}  [{CurrentIpAddress}]"
                 : CurrentAdapterLabel;
-            g.DrawString(label, OverlayFont, OverlayTextBrush, w - g.MeasureString(label, OverlayFont).Width - 6, y);
+            g.DrawString(label, OverlayFont, _overlayTextBrush, w - g.MeasureString(label, OverlayFont).Width - 6, y);
             y += 18;
         }
 
@@ -288,14 +309,14 @@ public sealed class GraphControl : Control
         if (Options.ShowMaxRate)
         {
             var text = $"Max  Down {FormatRate(maxDown)}   Up {FormatRate(maxUp)}";
-            g.DrawString(text, OverlaySmallFont, OverlayTextBrush, w - g.MeasureString(text, OverlaySmallFont).Width - 6, y);
+            g.DrawString(text, OverlaySmallFont, _overlayTextBrush, w - g.MeasureString(text, OverlaySmallFont).Width - 6, y);
             y += 15;
         }
 
         if (Options.ShowAverageSpeeds)
         {
             var text = $"Avg  Down {FormatRate(avgDown)}   Up {FormatRate(avgUp)}";
-            g.DrawString(text, OverlaySmallFont, OverlayTextBrush, w - g.MeasureString(text, OverlaySmallFont).Width - 6, y);
+            g.DrawString(text, OverlaySmallFont, _overlayTextBrush, w - g.MeasureString(text, OverlaySmallFont).Width - 6, y);
         }
     }
 
