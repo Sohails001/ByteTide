@@ -3,6 +3,19 @@
 All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses [Semantic Versioning](https://semver.org/).
 
+## [1.0.3]
+
+### Fixed
+- **Rates Recorder and Traffic Stopwatch windows were clipped** (cut-off text box and buttons) on some screens. Both are rebuilt with a fixed, DPI-aware layout, and so are the Usage Notifications and Email Settings windows.
+- **The View menu was too tall.** Options are now grouped into short submenus (Graph style, Graph width, Grid and labels, Average lines, Text overlay, Speed units). Toggle groups stay open while you click, so several options can be changed in one go.
+- **Link speed in the status bar kept flipping** between adapters (for example 1000 and 780 Mbps) because it followed whichever adapter was busiest each second. It now follows the adapter that carried the most traffic over the last ~10 seconds and only switches when another clearly takes over. Speeds of 1000 Mbps and above show as Gbps.
+- Traffic Stopwatch totals now use exact byte counts instead of rates.
+
+### Added
+- **Appearance: Match Windows / Dark / Light** (Window menu). The title bar, menus, status bar and graph follow the choice, and "Match Windows" follows Windows' own light/dark setting live. The tray menu matches too.
+- Adapters > Count in All Connections now shows each adapter's link speed, so an adapter with an impossible speed (for example 100000 Mbps) is easy to spot and uncheck.
+- More VPN and virtual adapters are recognised automatically (Tailscale, Cloudflare WARP, Proton, Mullvad, Surfshark and others).
+
 ## [1.0.2]
 
 ### Fixed (accuracy)
